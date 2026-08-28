@@ -19,6 +19,7 @@ type Config struct {
 	DataDir              string
 	LogRetention         int
 	ReadToken            string
+	AdminToken           string
 	HookTimeout          time.Duration
 	NotifyWebhookURLs    []string
 	NotifyTemplate       string
@@ -35,6 +36,7 @@ func loadConfig() (*Config, error) {
 		DataDir:           envOr("DATA_DIR", "/data"),
 		LogRetention:      envIntOr("LOG_RETENTION", 100),
 		ReadToken:         os.Getenv("READ_TOKEN"),
+		AdminToken:        os.Getenv("ADMIN_TOKEN"),
 		HookTimeout:       time.Duration(envIntOr("HOOK_TIMEOUT", 60)) * time.Second,
 		NotifyWebhookURLs: splitNonEmpty(os.Getenv("NOTIFY_WEBHOOK_URLS")),
 		NotifyTemplate:    os.Getenv("NOTIFY_TEMPLATE"),

@@ -30,6 +30,9 @@ on your server to pull and run it → apps are served privately via Tailscale
   Serve, no public exposure.
 - **Deployment history** — append-only JSONL + a bearer-authenticated `GET /deployments`
   read API + live structured `docker logs`.
+- **Web dashboard** — a small UI served by the agent at `/ui` to view every service
+  and the version it's running, and to add services to the deployment allowlist
+  from the browser (see [docs/dashboard.md](docs/dashboard.md)).
 
 ## Quickstart
 
@@ -44,7 +47,7 @@ on your server to pull and run it → apps are served privately via Tailscale
 
 ```
 .github/workflows/   reusable deploy-service workflow + agent image build
-deploy-agent/        the Go deploy agent (HTTP API, hooks, notify, history)
+deploy-agent/        the Go deploy agent (HTTP API, hooks, notify, history, dashboard)
 stack/               docker-compose for the agent + nginx, and .env.example
 services/            per-service compose files (copy from _template)
 nginx/conf.d/        reverse-proxy vhost templates (deploy webhook)
@@ -57,6 +60,7 @@ docs/                setup, architecture, adding-a-service, hooks, logs, securit
 - [Adding a service](docs/adding-a-service.md) — the 4-part recipe
 - [Hooks & notifications](docs/hooks-and-notifications.md) — pre/post hooks + Discord/Slack/ntfy
 - [Deployment logs](docs/deployment-logs.md) — history API + log schema
+- [Dashboard](docs/dashboard.md) — view services/versions + add services
 - [Tailscale access](docs/tailscale.md) — private access for personal-data apps
 - [Security](docs/security.md) — threat model
 - [Architecture](docs/architecture.md) — how it fits together

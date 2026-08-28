@@ -2,6 +2,11 @@
 
 Four steps. Use a unique lowercase name (`my-service`) throughout.
 
+> **Alternative:** the [dashboard](dashboard.md) can create the service compose
+> file for you (its "Add service" form). That replaces step 1 below; you still
+> need steps 2–4 (the project repo's `deploy.yml` + `SERVICE_ENV` secret, then a
+> push).
+
 ## 1. Service compose file (in this repo)
 
 ```sh

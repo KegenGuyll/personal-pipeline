@@ -227,6 +227,18 @@ func (d *deployer) authorizeRead(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+func (d *deployer) authorizeWrite(w http.ResponseWriter, r *http.Request) bool {
+	if d.cfg.AdminToken == "" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "write endpoint disabled"})
+		return false
+	}
+	if r.Header.Get("Authorization") != "Bearer "+d.cfg.AdminToken {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return false
+	}
+	return true
+}
+
 func (d *deployer) handleListDeployments(w http.ResponseWriter, r *http.Request) {
 	if !d.authorizeRead(w, r) {
 		return
