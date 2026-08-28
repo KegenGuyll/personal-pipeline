@@ -20,6 +20,7 @@ minimal and authenticated.
 | No secret logging | The `env` map is never logged/echoed; the CI notify step never prints the payload. |
 | Read-only GHCR token | The server's pull token has `read:packages` only. |
 | Bearer read API | `GET /deployments` requires `READ_TOKEN`; disabled if unset. |
+| Bearer write API | `POST /services` (dashboard "add service") requires a separate `ADMIN_TOKEN`; disabled if unset. The agent only accepts name/image/port/hostname — never raw compose — and validates the image against the allowlist. |
 
 ## Secrets flow
 

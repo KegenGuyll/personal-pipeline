@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Deployments</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Deployments</h1>
+      <p class="subtitle">Services and the version each is running</p>
+    </div>
+    <button id="settings-toggle" class="ghost">Settings</button>
+  </header>
+
+  <section id="settings" hidden>
+    <div class="card">
+      <label>
+        Read token
+        <input type="password" id="read-token" autocomplete="off" placeholder="READ_TOKEN">
+      </label>
+      <label>
+        Admin token
+        <input type="password" id="admin-token" autocomplete="off" placeholder="ADMIN_TOKEN">
+      </label>
+      <div class="row">
+        <button id="save-tokens">Save</button>
+        <p class="hint">Stored only in this browser. Read token lists services; admin token adds them.</p>
+      </div>
+    </div>
+  </section>
+
+  <p id="banner" class="banner" hidden></p>
+
+  <section>
+    <div class="section-head">
+      <h2>Services</h2>
+      <button id="refresh" class="ghost">Refresh</button>
+    </div>
+    <div class="card">
+      <table id="services-table">
+        <thead>
+          <tr>
+            <th>Service</th>
+            <th>Version</th>
+            <th>Image</th>
+            <th>Access</th>
+            <th>Last deploy</th>
+          </tr>
+        </thead>
+        <tbody id="services-body"></tbody>
+      </table>
+      <p id="services-empty" class="empty" hidden>No services yet. Add one below.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Add service</h2>
+    <form id="add-form" class="card form">
+      <div class="grid">
+        <label>
+          Name
+          <input name="name" required pattern="[a-z][a-z0-9-]*" placeholder="my-service">
+        </label>
+        <label>
+          Image
+          <input name="image" required placeholder="ghcr.io/owner/my-service">
+        </label>
+        <label>
+          Port
+          <input name="port" type="number" min="1" max="65535" value="3000">
+        </label>
+        <label>
+          Hostname
+          <input name="hostname" placeholder="my-service (Tailscale MagicDNS)">
+        </label>
+      </div>
+      <button type="submit">Add service</button>
+      <p class="hint">Creates a private (Tailscale) service. Requires the admin token.</p>
+      <p id="add-error" class="error" hidden></p>
+    </form>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>

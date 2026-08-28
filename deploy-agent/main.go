@@ -30,6 +30,12 @@ func main() {
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("GET /deployments", d.handleListDeployments)
 	mux.HandleFunc("GET /deployments/{id}", d.handleGetDeployment)
+	mux.HandleFunc("GET /services", d.handleListServices)
+	mux.HandleFunc("POST /services", d.handleCreateService)
+	mux.Handle("GET /ui/", http.StripPrefix("/ui/", webHandler()))
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/ui/", http.StatusFound)
+	})
 
 	addr := ":" + cfg.Port
 	logEvent("server.start", map[string]any{"addr": addr, "services_dir": cfg.ServicesDir})
