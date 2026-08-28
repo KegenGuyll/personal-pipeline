@@ -56,14 +56,15 @@ Verify the agent is up:
 ```sh
 docker compose -f stack/docker-compose.yml logs -f agent
 # or
-curl -fsS http://localhost:8080/healthz   # -> ok
+curl -fsS http://localhost:9090/healthz   # -> ok (AGENT_PORT; default 9090)
 ```
 
 ## 4. TLS + external access
 
 ### Option A — you already run host nginx (recommended when you have one)
 
-The agent publishes a loopback-only port (`127.0.0.1:8080`) and the dockerized
+The agent publishes a loopback-only port (`127.0.0.1:<AGENT_PORT>:8080`, default
+`9090`) and the dockerized
 nginx service is opt-in, so nothing conflicts with your existing nginx.
 
 1. Start the stack (agent only):
@@ -87,7 +88,7 @@ nginx service is opt-in, so nothing conflicts with your existing nginx.
        ssl_certificate_key /etc/letsencrypt/live/<domain>/privkey.pem;
 
        location / {
-           proxy_pass http://127.0.0.1:8080;
+           proxy_pass http://127.0.0.1:9090;   # the deploy agent (AGENT_PORT)
            proxy_http_version 1.1;
            proxy_set_header Host $host;
            proxy_set_header X-Real-IP $remote_addr;
