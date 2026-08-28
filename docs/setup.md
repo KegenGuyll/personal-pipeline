@@ -46,7 +46,8 @@ docker network create proxy
 cp stack/.env.example stack/.env
 # edit stack/.env: WEBHOOK_SECRET, GHCR_OWNER, GHCR_USER, GHCR_TOKEN, READ_TOKEN, ...
 
-# start the agent + nginx (builds the agent image locally)
+# start the stack — the agent always runs; the dockerized nginx only starts
+# if you opt in with `--profile docker-nginx` (see step 4, Option B)
 docker compose -f stack/docker-compose.yml up -d --build
 ```
 
@@ -60,34 +61,76 @@ curl -fsS http://localhost:8080/healthz   # -> ok
 
 ## 4. TLS + external access
 
-Two supported layouts:
+### Option A — you already run host nginx (recommended when you have one)
 
-### Option A — dockerized nginx (default)
+The agent publishes a loopback-only port (`127.0.0.1:8080`) and the dockerized
+nginx service is opt-in, so nothing conflicts with your existing nginx.
 
-The stack runs its own nginx on ports 80/443. Point your existing external
-entry (port-forward or tunnel) at this nginx, and mount your certificates into
-the `nginx-certs` volume (or bind-mount your `/etc/letsencrypt` tree). Copy
-`nginx/conf.d/deploy.example.com.conf.example` to `deploy.<domain>.conf` and
-edit the `server_name` + cert paths (the `.conf.example` files are ignored by
-nginx, so they're safe to leave in place).
+1. Start the stack (agent only):
 
-### Option B — keep your existing host nginx
+   ```sh
+   docker compose -f stack/docker-compose.yml up -d --build
+   ```
 
-Add a loopback port to the agent in `stack/docker-compose.yml`:
+2. Add DNS records for `deploy.<domain>` and each `<service>.<domain>` you
+   plan to serve (same host/IP your other records point at).
 
-```yaml
-    ports:
-      - "127.0.0.1:8080:8080"
+3. Add this vhost to your existing nginx (a new file in `sites-available/` or
+   `conf.d/`), replacing `<domain>` and the cert paths:
+
+   ```nginx
+   server {
+       listen 443 ssl;
+       server_name deploy.<domain>;
+
+       ssl_certificate     /etc/letsencrypt/live/<domain>/fullchain.pem;
+       ssl_certificate_key /etc/letsencrypt/live/<domain>/privkey.pem;
+
+       location / {
+           proxy_pass http://127.0.0.1:8080;
+           proxy_http_version 1.1;
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto $scheme;
+           proxy_read_timeout 300s;   # compose pull+up can take a while
+       }
+   }
+   ```
+
+4. Make sure the certificate covers `deploy.<domain>` — extend your existing
+   certbot cert:
+
+   ```sh
+   sudo certbot certonly --nginx -d <domain> -d deploy.<domain>
+   ```
+
+5. Validate and reload:
+
+   ```sh
+   sudo nginx -t && sudo systemctl reload nginx
+   ```
+
+**App services with host nginx:** each service publishes a loopback port
+instead of `expose`, e.g. `ports: ["127.0.0.1:8080:8080"]` (unique host port
+per service), and its vhost uses `proxy_pass http://127.0.0.1:<host-port>;`.
+See [adding-a-service.md](adding-a-service.md).
+
+### Option B — no host nginx: use the dockerized one
+
+```sh
+docker compose -f stack/docker-compose.yml --profile docker-nginx up -d --build
 ```
 
-Don't run the dockerized `nginx` service. Instead, add the two vhosts from
-`nginx/conf.d/` to your host nginx, changing `proxy_pass http://agent:8080`
-to `proxy_pass http://127.0.0.1:8080`, and app vhosts to
-`http://127.0.0.1:<port>` (app services then need `ports` instead of `expose`).
+Mount your certificates into the `nginx-certs` volume and copy
+`nginx/conf.d/deploy.example.com.conf.example` → `deploy.<domain>.conf` (the
+`.conf.example` files are ignored by nginx until renamed). App services keep
+`expose` and vhosts use the compose service name over the `proxy` network
+(`proxy_pass http://my-service:8080;`).
 
-## 5. DNS
+## 5. DNS summary
 
-Create records for the domains your nginx will serve:
+Records your nginx will serve (details in step 4):
 
 | Domain | Purpose |
 |---|---|

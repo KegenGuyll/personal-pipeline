@@ -34,10 +34,13 @@ services:
       - agent-data:/data
     networks:
       - proxy
+    ports:
+      - "127.0.0.1:8080:8080"   # loopback only: host nginx proxies to this
     expose:
-      - "8080"
+      - "8080"                   # internal: dockerized nginx uses this
 
   nginx:
+    profiles: ["docker-nginx"]   # opt-in: skip when you already run host nginx
     image: nginx:1.27-alpine
     restart: unless-stopped
     volumes:

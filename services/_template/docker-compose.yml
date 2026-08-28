@@ -14,7 +14,10 @@ services:
     networks:
       - proxy
     expose:
-      - "8080" # the port nginx will forward to
+      - "8080" # dockerized nginx: internal only (service alias on `proxy`)
+    # Host nginx? Replace `expose` with a loopback port, e.g.:
+    # ports:
+    #   - "127.0.0.1:8080:8080"   # unique host port per service
 
 networks:
   proxy:

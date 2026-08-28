@@ -17,8 +17,12 @@ services:
     restart: unless-stopped
     env_file: .env
     networks: [proxy]
-    expose: ["8080"]
+    expose: ["8080"]                           # dockerized nginx: internal only
 ```
+
+> **Host nginx?** Replace `expose` with a loopback port so your nginx can
+> reach the container: `ports: ["127.0.0.1:8080:8080"]` (unique host port per
+> service — nginx proxies to that).
 
 Optional: drop a `services/my-service/hooks/pre-deploy` and/or `post-deploy`
 script (see [hooks-and-notifications.md](hooks-and-notifications.md)).
@@ -31,12 +35,19 @@ Commit and push this repo.
 cp nginx/conf.d/app.example.com.conf.example nginx/conf.d/my-service.<domain>.conf
 ```
 
-Edit it: set `server_name my-service.<domain>` and
-`proxy_pass http://my-service:8080`. Reload nginx:
+Edit it — set `server_name my-service.<domain>`, then one of:
+
+- **dockerized nginx:** `proxy_pass http://my-service:8080;` (service name on
+  the `proxy` network).
+- **host nginx:** `proxy_pass http://127.0.0.1:8080;` — the host port you
+  published in step 1.
+
+Reload nginx:
 
 ```sh
-docker compose -f stack/docker-compose.yml exec nginx nginx -s reload
-# or, for host nginx: sudo nginx -s reload
+docker compose -f stack/docker-compose.yml exec nginx nginx -s reload   # dockerized
+# or, for host nginx:
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
 ## 3. Project repo: `deploy.yml` + secrets
