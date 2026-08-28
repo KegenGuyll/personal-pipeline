@@ -4,8 +4,8 @@ A self-hosted, GitHub-connected deployment pipeline for a home Docker server.
 
 `git push` to a project repo → GitHub Actions builds and pushes an image to
 GitHub Container Registry (GHCR) → a signed webhook tells a small deploy agent
-on your server to pull and run it → nginx exposes it at
-`https://<service>.<domain>`.
+on your server to pull and run it → apps are served privately via Tailscale
+(`https://<service>.<tailnet>.ts.net`) or publicly via nginx.
 
 ```
 [project repo] --push--> GitHub Actions --build/push--> GHCR
@@ -13,6 +13,7 @@ on your server to pull and run it → nginx exposes it at
                                   | HTTPS POST /hooks/deploy (HMAC-SHA256)
                                   v
 [home server]  nginx --> deploy agent --> docker compose pull && up -d --> app
+                     (deploy webhook stays public; apps served via Tailscale)
 ```
 
 ## Features
@@ -25,6 +26,8 @@ on your server to pull and run it → nginx exposes it at
   `services/<name>/.env` atomically (0600).
 - **Pre/post deploy hooks** (`services/<name>/hooks/pre-deploy`, `post-deploy`) and
   **generic webhook notifications** (Discord/Slack/ntfy/anything via a template).
+- **Tailscale access** for apps holding personal data — loopback ports + Tailscale
+  Serve, no public exposure.
 - **Deployment history** — append-only JSONL + a bearer-authenticated `GET /deployments`
   read API + live structured `docker logs`.
 
@@ -44,8 +47,8 @@ on your server to pull and run it → nginx exposes it at
 deploy-agent/        the Go deploy agent (HTTP API, hooks, notify, history)
 stack/               docker-compose for the agent + nginx, and .env.example
 services/            per-service compose files (copy from _template)
-nginx/conf.d/        reverse-proxy vhost templates (deploy + app)
-docs/                setup, architecture, adding-a-service, hooks, logs, security
+nginx/conf.d/        reverse-proxy vhost templates (deploy webhook)
+docs/                setup, architecture, adding-a-service, hooks, logs, security, tailscale
 ```
 
 ## Docs
@@ -54,6 +57,7 @@ docs/                setup, architecture, adding-a-service, hooks, logs, securit
 - [Adding a service](docs/adding-a-service.md) — the 4-part recipe
 - [Hooks & notifications](docs/hooks-and-notifications.md) — pre/post hooks + Discord/Slack/ntfy
 - [Deployment logs](docs/deployment-logs.md) — history API + log schema
+- [Tailscale access](docs/tailscale.md) — private access for personal-data apps
 - [Security](docs/security.md) — threat model
 - [Architecture](docs/architecture.md) — how it fits together
 

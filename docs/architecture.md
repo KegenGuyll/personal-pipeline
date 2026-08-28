@@ -53,13 +53,22 @@ tag + env for a versioned service.
   (secrets that must exist before any webhook can arrive: `WEBHOOK_SECRET`,
   GHCR credentials, `READ_TOKEN`, notification URLs).
 - `services/<name>/` — one compose project per app, deployed independently.
-- `nginx/conf.d/` — vhost templates for `deploy.<domain>` and each app.
+- `nginx/conf.d/` — vhost templates for the deploy webhook (apps use Tailscale
+  or NPM for public ones).
 
 ### 4. Networks
 
-All containers join an external `proxy` network. nginx reaches the agent and
-app services by their compose service name (network alias). App containers do
-not publish host ports.
+All containers join an external `proxy` network. nginx reaches the deploy agent
+by its compose service name. Private apps publish a loopback-only port and are
+fronted by Tailscale Serve; public apps publish a port for NPM.
+
+### 5. App access (Tailscale)
+
+Services with personal data (e.g. `personal-finance`) are **not** exposed
+publicly. They bind `127.0.0.1:<port>` and are reached only via
+`https://<machine>.<tailnet>.ts.net` (Tailscale Serve + MagicDNS). See
+[tailscale.md](tailscale.md). The deploy webhook stays public — it serves no
+personal content.
 
 ## Why not a self-hosted runner?
 

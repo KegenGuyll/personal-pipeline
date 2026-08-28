@@ -1,10 +1,14 @@
-# Copy this whole directory to services/<name>/ and adjust:
-#   1. the service key `app`  -> your service name (must be unique on the
-#      `proxy` network; nginx will use it as the upstream hostname)
-#   2. the image              -> ghcr.io/<owner>/<service>:${TAG}
-#                                 (owner LOWERCASE — GHCR requires it)
-#   3. the exposed port       -> the port your app listens on
+# Copy this directory to services/<name>/ and adjust:
+#   1. the service key `app` -> your service name (unique on the `proxy` network)
+#   2. the image             -> ghcr.io/<owner>/<service>:${TAG}  (owner LOWERCASE)
+#   3. the port              -> the port your app listens on (default 3000)
 # `${TAG}` is written by the deploy agent into this directory's `.env`.
+#
+# Access model — choose ONE (see docs/adding-a-service.md):
+#   • Private (Tailscale — recommended for anything with personal data):
+#     publish a LOOPBACK port and front it with `tailscale serve`
+#     (docs/tailscale.md). Only your tailnet can reach it.
+#   • Public (NPM/nginx): publish a port NPM can reach and add a proxy host.
 
 services:
   app: # RENAME to your service name
@@ -13,11 +17,10 @@ services:
     env_file: .env
     networks:
       - proxy
-    expose:
-      - "8080" # dockerized nginx: internal only (service alias on `proxy`)
-    # Host nginx? Replace `expose` with a loopback port, e.g.:
-    # ports:
-    #   - "127.0.0.1:8080:8080"   # unique host port per service
+    ports:
+      - "127.0.0.1:3001:3000" # private (Tailscale): loopback only
+    # public (NPM/nginx) instead?
+    #   - "3001:3000"
 
 networks:
   proxy:

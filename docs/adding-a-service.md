@@ -8,7 +8,7 @@ Four steps. Use a unique lowercase name (`my-service`) throughout.
 cp -R services/_template services/my-service
 ```
 
-Edit `services/my-service/docker-compose.yml`:
+Edit `services/my-service/docker-compose.yml` and pick the **access mode**:
 
 ```yaml
 services:
@@ -17,38 +17,40 @@ services:
     restart: unless-stopped
     env_file: .env
     networks: [proxy]
-    expose: ["8080"]                           # dockerized nginx: internal only
+    ports:
+      - "127.0.0.1:3001:3000"                  # private (Tailscale)
+    # public (NPM/nginx)? use:  - "3001:3000"
 ```
 
-> **Host nginx?** Replace `expose` with a loopback port so your nginx can
-> reach the container: `ports: ["127.0.0.1:8080:8080"]` (unique host port per
-> service — nginx proxies to that).
+- **Private (Tailscale)** — for anything with personal data: keep the loopback
+  port and add a `tailscale serve` entry (see [tailscale.md](tailscale.md)).
+  Reachable only on your tailnet.
+- **Public** — publish a port NPM can reach and add a proxy host (step 2).
 
 Optional: drop a `services/my-service/hooks/pre-deploy` and/or `post-deploy`
 script (see [hooks-and-notifications.md](hooks-and-notifications.md)).
 
 Commit and push this repo.
 
-## 2. nginx vhost (in this repo)
+## 2. Expose the service
+
+### Private (Tailscale) — recommended for personal data
+
+On the server, front the loopback port with Tailscale Serve:
 
 ```sh
-cp nginx/conf.d/app.example.com.conf.example nginx/conf.d/my-service.<domain>.conf
+tailscale serve --bg 443 http://127.0.0.1:3001
 ```
 
-Edit it — set `server_name my-service.<domain>`, then one of:
+Now `https://<machine>.<tailnet>.ts.net` serves the app to your tailnet devices.
+See [tailscale.md](tailscale.md) for the full setup (MagicDNS, TLS certs, clients).
 
-- **dockerized nginx:** `proxy_pass http://my-service:8080;` (service name on
-  the `proxy` network).
-- **host nginx:** `proxy_pass http://127.0.0.1:8080;` — the host port you
-  published in step 1.
+### Public (NPM/nginx)
 
-Reload nginx:
-
-```sh
-docker compose -f stack/docker-compose.yml exec nginx nginx -s reload   # dockerized
-# or, for host nginx:
-sudo nginx -t && sudo systemctl reload nginx
-```
+Add an NPM **Proxy Host**: Domain `my-service.<domain>`, Scheme `http`, Forward
+`<server LAN IP>:3001`. (Or use the hand-written vhost in
+`nginx/conf.d/app.example.com.conf.example`.) No cert needed if Cloudflare
+terminates TLS.
 
 ## 3. Project repo: `deploy.yml` + secrets
 
@@ -88,7 +90,10 @@ which writes `services/my-service/.env` (with `TAG` + your env) and runs
 
 ```sh
 docker compose -f stack/docker-compose.yml logs -f agent
-curl -fsS https://my-service.<domain>/
+# private (Tailscale):
+curl -fsS https://<machine>.<tailnet>.ts.net/
+# public (NPM):
+# curl -fsS https://my-service.<domain>/
 ```
 
 ## Notes

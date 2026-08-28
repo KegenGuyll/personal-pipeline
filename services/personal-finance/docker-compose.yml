@@ -1,5 +1,6 @@
 # Deploy config for the personal-finance app (Next.js on container port 3000).
-# Reached by NPM via the host port below (192.168.68.110:<host port>).
+# Private access via Tailscale: binds loopback only; `tailscale serve` on the
+# server proxies https://<machine>.<tailnet>.ts.net -> 127.0.0.1:3001.
 services:
   personal-finance:
     image: ghcr.io/kegenguyll/personal-finance:${TAG}
@@ -8,7 +9,7 @@ services:
     networks:
       - proxy
     ports:
-      - "3001:3000" # host port NPM forwards to; change the left side if taken
+      - "127.0.0.1:3001:3000" # loopback only — Tailscale Serve proxies to this
     # healthcheck:
     #   test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
     #   interval: 30s
