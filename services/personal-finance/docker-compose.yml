@@ -1,0 +1,20 @@
+# Deploy config for the personal-finance app (Next.js on container port 3000).
+# Reached by NPM via the host port below (192.168.68.110:<host port>).
+services:
+  personal-finance:
+    image: ghcr.io/kegenguyll/personal-finance:${TAG}
+    restart: unless-stopped
+    env_file: .env
+    networks:
+      - proxy
+    ports:
+      - "3001:3000" # host port NPM forwards to; change the left side if taken
+    # healthcheck:
+    #   test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
+    #   interval: 30s
+    #   timeout: 5s
+    #   retries: 3
+
+networks:
+  proxy:
+    external: true
