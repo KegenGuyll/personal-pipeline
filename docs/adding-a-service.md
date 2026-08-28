@@ -8,24 +8,19 @@ Four steps. Use a unique lowercase name (`my-service`) throughout.
 cp -R services/_template services/my-service
 ```
 
-Edit `services/my-service/docker-compose.yml` and pick the **access mode**:
+Edit `services/my-service/docker-compose.yml`:
 
-```yaml
-services:
-  my-service:                                  # unique name = network alias
-    image: ghcr.io/YOUR_OWNER/my-service:${TAG}   # YOUR_OWNER in lowercase
-    restart: unless-stopped
-    env_file: .env
-    networks: [proxy]
-    ports:
-      - "127.0.0.1:3001:3000"                  # private (Tailscale)
-    # public (NPM/nginx)? use:  - "3001:3000"
-```
+1. Rename the `app` service key to `my-service`, and update the `Proxy` URL in
+   the `ts-serve` config at the bottom to `http://my-service:<port>`.
+2. Set `image: ghcr.io/YOUR_OWNER/my-service:${TAG}` (owner lowercase).
+3. Set the container port in `expose` (default `3000`).
+4. Set the Tailscale `hostname` — this is the MagicDNS name
+   `https://<hostname>.<tailnet>.ts.net`.
 
-- **Private (Tailscale)** — for anything with personal data: keep the loopback
-  port and add a `tailscale serve` entry (see [tailscale.md](tailscale.md)).
-  Reachable only on your tailnet.
-- **Public** — publish a port NPM can reach and add a proxy host (step 2).
+The template already includes a per-app **Tailscale sidecar**, so the service is
+private by default (no public route). See [tailscale.md](tailscale.md). To make
+it public instead, remove the `tailscale` service + `ts-serve` config and publish
+a port for NPM.
 
 Optional: drop a `services/my-service/hooks/pre-deploy` and/or `post-deploy`
 script (see [hooks-and-notifications.md](hooks-and-notifications.md)).
@@ -34,23 +29,12 @@ Commit and push this repo.
 
 ## 2. Expose the service
 
-### Private (Tailscale) — recommended for personal data
-
-On the server, front the loopback port with Tailscale Serve:
-
-```sh
-tailscale serve --bg 443 http://127.0.0.1:3001
-```
-
-Now `https://<machine>.<tailnet>.ts.net` serves the app to your tailnet devices.
-See [tailscale.md](tailscale.md) for the full setup (MagicDNS, TLS certs, clients).
-
-### Public (NPM/nginx)
-
-Add an NPM **Proxy Host**: Domain `my-service.<domain>`, Scheme `http`, Forward
-`<server LAN IP>:3001`. (Or use the hand-written vhost in
-`nginx/conf.d/app.example.com.conf.example`.) No cert needed if Cloudflare
-terminates TLS.
+- **Private (default):** nothing else — the sidecar serves
+  `https://<hostname>.<tailnet>.ts.net` to your tailnet. Set `TS_AUTHKEY` in
+  this service's `SERVICE_ENV` (see [tailscale.md](tailscale.md)).
+- **Public (optional):** remove the sidecar + `ts-serve` config, publish a port,
+  and add an NPM **Proxy Host** (Domain `my-service.<domain>`, Scheme `http`,
+  Forward `<server LAN IP>:<port>`).
 
 ## 3. Project repo: `deploy.yml` + secrets
 
@@ -79,7 +63,7 @@ In that repo, create a `SERVICE_ENV` secret holding the app's environment as a
 JSON object:
 
 ```json
-{"PORT":"8080","API_KEY":"...","DATABASE_URL":"..."}
+{"TS_AUTHKEY":"tskey-auth-...","API_KEY":"...","DATABASE_URL":"..."}
 ```
 
 ## 4. First deploy
@@ -91,7 +75,7 @@ which writes `services/my-service/.env` (with `TAG` + your env) and runs
 ```sh
 docker compose -f stack/docker-compose.yml logs -f agent
 # private (Tailscale):
-curl -fsS https://<machine>.<tailnet>.ts.net/
+curl -fsS https://<hostname>.<tailnet>.ts.net/
 # public (NPM):
 # curl -fsS https://my-service.<domain>/
 ```

@@ -59,16 +59,17 @@ tag + env for a versioned service.
 ### 4. Networks
 
 All containers join an external `proxy` network. nginx reaches the deploy agent
-by its compose service name. Private apps publish a loopback-only port and are
-fronted by Tailscale Serve; public apps publish a port for NPM.
+by its compose service name. Each private app has a `tailscale` sidecar on the
+same network that proxies tailnet HTTPS to the app; public apps publish a port
+for NPM.
 
 ### 5. App access (Tailscale)
 
 Services with personal data (e.g. `personal-finance`) are **not** exposed
-publicly. They bind `127.0.0.1:<port>` and are reached only via
-`https://<machine>.<tailnet>.ts.net` (Tailscale Serve + MagicDNS). See
-[tailscale.md](tailscale.md). The deploy webhook stays public — it serves no
-personal content.
+publicly. Each service runs a per-app `tailscale` **sidecar** that registers as
+its own device and serves `https://<hostname>.<tailnet>.ts.net`, proxying to the
+app over the `proxy` network (no host port). See [tailscale.md](tailscale.md).
+The deploy webhook stays public — it serves no personal content.
 
 ## Why not a self-hosted runner?
 
