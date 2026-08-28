@@ -35,7 +35,7 @@ services:
     networks:
       - proxy
     ports:
-      - "127.0.0.1:${AGENT_PORT:-9090}:8080"   # loopback only: host nginx proxies to this
+      - "${AGENT_PORT:-9090}:8080"   # all-interfaces: NPM / reverse proxy forwards to this
     expose:
       - "8080"                   # internal: dockerized nginx uses this
 

@@ -61,11 +61,23 @@ curl -fsS http://localhost:9090/healthz   # -> ok (AGENT_PORT; default 9090)
 
 ## 4. TLS + external access
 
-### Option A — you already run host nginx (recommended when you have one)
+### Option A — you already run a reverse proxy (host nginx / Nginx Proxy Manager)
 
-The agent publishes a loopback-only port (`127.0.0.1:<AGENT_PORT>:8080`, default
-`9090`) and the dockerized
-nginx service is opt-in, so nothing conflicts with your existing nginx.
+The agent publishes `<AGENT_PORT>` (default `9090`) on **all interfaces** so a
+proxy can forward to it via the server's LAN IP:port. The dockerized nginx
+service is opt-in and skipped by default.
+
+#### Using Nginx Proxy Manager (easiest — no nginx config on the host)
+
+In the NPM UI create a **Proxy Host**:
+
+- **Domain Names:** `deploy.<domain>`
+- **Scheme:** `http`
+- **Forward Hostname/IP:** your server's LAN IP (e.g. `192.168.68.110`)
+- **Forward Port:** `<AGENT_PORT>` (default `9090`)
+- **SSL tab:** no cert needed — Cloudflare Tunnel terminates TLS
+
+#### Using hand-written host nginx
 
 1. Start the stack (agent only):
 
