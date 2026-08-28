@@ -39,7 +39,10 @@ jobs:
       - name: Compute image and tag
         id: meta
         run: |
-          echo "image=ghcr.io/${{ github.repository_owner }}/deploy-agent" >> "$GITHUB_OUTPUT"
+          # GHCR requires lowercase namespaces, but github.repository_owner
+          # preserves the casing of your username/org.
+          owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          echo "image=ghcr.io/${owner}/deploy-agent" >> "$GITHUB_OUTPUT"
           echo "tag=sha-${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push agent image

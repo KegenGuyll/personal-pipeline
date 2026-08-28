@@ -2,6 +2,7 @@
 #   1. the service key `app`  -> your service name (must be unique on the
 #      `proxy` network; nginx will use it as the upstream hostname)
 #   2. the image              -> ghcr.io/<owner>/<service>:${TAG}
+#                                 (owner LOWERCASE — GHCR requires it)
 #   3. the exposed port       -> the port your app listens on
 # `${TAG}` is written by the deploy agent into this directory's `.env`.
 

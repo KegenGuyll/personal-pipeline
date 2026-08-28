@@ -13,7 +13,7 @@ Edit `services/my-service/docker-compose.yml`:
 ```yaml
 services:
   my-service:                                  # unique name = network alias
-    image: ghcr.io/YOUR_OWNER/my-service:${TAG}
+    image: ghcr.io/YOUR_OWNER/my-service:${TAG}   # YOUR_OWNER in lowercase
     restart: unless-stopped
     env_file: .env
     networks: [proxy]

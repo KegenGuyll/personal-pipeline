@@ -55,7 +55,9 @@ jobs:
       - name: Compute image and tag
         id: meta
         run: |
-          owner="${{ github.repository_owner }}"
+          # GHCR requires lowercase namespaces, but github.repository_owner
+          # preserves the casing of your username/org.
+          owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
           image="${{ inputs.image }}"
           if [ -z "$image" ]; then
             image="ghcr.io/${owner}/${{ inputs.service }}"
