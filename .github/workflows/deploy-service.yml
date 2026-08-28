@@ -1,0 +1,152 @@
+name: deploy-service
+
+# Reusable workflow: build a project image, push it to GHCR, and notify the
+# home-server deploy agent via a signed webhook. Called from each project repo.
+on:
+  workflow_call:
+    inputs:
+      service:
+        description: "Service/project name (must match services/<name>/ on the server)"
+        required: true
+        type: string
+      context:
+        description: "Docker build context path"
+        required: false
+        type: string
+        default: .
+      dockerfile:
+        description: "Dockerfile path, relative to the build context"
+        required: false
+        type: string
+        default: Dockerfile
+      image:
+        description: "Full image ref without tag (defaults to ghcr.io/<owner>/<service>)"
+        required: false
+        type: string
+        default: ""
+      platforms:
+        description: "Comma-separated build platforms"
+        required: false
+        type: string
+        default: linux/amd64
+      deploy:
+        description: "Whether to push the image and notify the deploy agent"
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      deploy_webhook_url:
+        required: true
+      deploy_webhook_secret:
+        required: true
+      service_env:
+        required: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute image and tag
+        id: meta
+        run: |
+          owner="${{ github.repository_owner }}"
+          image="${{ inputs.image }}"
+          if [ -z "$image" ]; then
+            image="ghcr.io/${owner}/${{ inputs.service }}"
+          fi
+          tag="sha-${GITHUB_SHA:0:7}"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "full=${image}:${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        if: ${{ inputs.platforms != 'linux/amd64' }}
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: ${{ inputs.platforms }}
+          push: ${{ inputs.deploy }}
+          tags: |
+            ${{ steps.meta.outputs.full }}
+            ${{ steps.meta.outputs.image }}:latest
+
+      - name: Notify deploy agent
+        if: ${{ inputs.deploy }}
+        env:
+          SERVICE: ${{ inputs.service }}
+          IMAGE: ${{ steps.meta.outputs.image }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+          SERVICE_ENV: ${{ secrets.service_env }}
+          WEBHOOK_URL: ${{ secrets.deploy_webhook_url }}
+          WEBHOOK_SECRET: ${{ secrets.deploy_webhook_secret }}
+        run: |
+          # NOTE: this script must never print the request body — the merged
+          # payload contains secrets and is not masked by GitHub.
+          python3 - <<'PY'
+          import json, os, hmac, hashlib, sys, urllib.request, urllib.error
+
+          env_obj = {}
+          if os.environ.get("SERVICE_ENV"):
+              env_obj = json.loads(os.environ["SERVICE_ENV"])
+
+          payload = {
+              "project": os.environ["SERVICE"],
+              "image": os.environ["IMAGE"],
+              "tag": os.environ["TAG"],
+              "repo": os.environ["REPO"],
+              "sha": os.environ["SHA"],
+              "env": env_obj,
+          }
+          body = json.dumps(payload).encode()
+          sig = "sha256=" + hmac.new(
+              os.environ["WEBHOOK_SECRET"].encode(), body, hashlib.sha256
+          ).hexdigest()
+
+          req = urllib.request.Request(
+              os.environ["WEBHOOK_URL"],
+              data=body,
+              method="POST",
+              headers={
+                  "Content-Type": "application/json",
+                  "X-Hub-Signature-256": sig,
+              },
+          )
+          try:
+              with urllib.request.urlopen(req, timeout=180) as resp:
+                  status = resp.status
+                  resp_body = resp.read().decode()
+          except urllib.error.HTTPError as e:
+              status = e.code
+              resp_body = e.read().decode()
+          except Exception as e:
+              print(f"webhook request failed: {e}", file=sys.stderr)
+              sys.exit(1)
+
+          print(f"webhook status: {status}")
+          if status < 200 or status > 299:
+              print(f"webhook body: {resp_body}", file=sys.stderr)
+              sys.exit(1)
+          print("deploy triggered successfully")
+          PY

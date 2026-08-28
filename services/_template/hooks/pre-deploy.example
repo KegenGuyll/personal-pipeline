@@ -1,0 +1,17 @@
+#!/bin/sh
+# Rename this file to `pre-deploy` and `chmod +x` to enable it.
+# Runs BEFORE `docker compose pull/up`. A non-zero exit aborts the deploy.
+set -eu
+
+echo "pre-deploy: $DEPLOY_PROJECT @ $DEPLOY_TAG"
+
+# Available env vars: DEPLOY_PROJECT, DEPLOY_IMAGE, DEPLOY_TAG, DEPLOY_SHA,
+# DEPLOY_REPO, DEPLOY_STATUS, DEPLOY_ERROR, DEPLOY_DURATION_MS.
+#
+# Hooks run inside the agent container, which is on the `proxy` network and has
+# the Docker socket mounted — so you can `docker run` or `curl` other services.
+#
+# Example: run a one-shot migration before swapping the app.
+# docker run --rm --network proxy \
+#   -e DATABASE_URL="$DATABASE_URL" \
+#   ghcr.io/YOUR_OWNER/YOUR_SERVICE:${DEPLOY_TAG} migrate

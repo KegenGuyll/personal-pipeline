@@ -1,0 +1,53 @@
+name: deploy-infra
+
+# Builds and publishes the deploy-agent image to GHCR whenever the agent or
+# stack changes. Applying infra changes on the server is a manual step:
+#
+#   git pull && docker compose -f stack/docker-compose.yml up -d --build
+#
+# (Webhook self-update is intentionally not wired in v1 — the agent restarts
+# itself mid-deploy, which is safest to introduce after it has been validated
+# on a live server.)
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy-agent/**"
+      - "stack/**"
+      - "nginx/**"
+
+jobs:
+  build-agent-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image and tag
+        id: meta
+        run: |
+          echo "image=ghcr.io/${{ github.repository_owner }}/deploy-agent" >> "$GITHUB_OUTPUT"
+          echo "tag=sha-${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push agent image
+        uses: docker/build-push-action@v5
+        with:
+          context: deploy-agent
+          file: deploy-agent/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.image }}:latest

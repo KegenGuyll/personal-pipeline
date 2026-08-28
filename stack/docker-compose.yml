@@ -1,0 +1,60 @@
+name: pipeline
+
+# Bootstrap + run compose for the deploy agent and nginx.
+# Values are interpolated from `stack/.env` (see `.env.example`).
+#
+# First run (manual bootstrap):
+#   docker network create proxy
+#   cp stack/.env.example stack/.env   # then fill it in
+#   docker compose -f stack/docker-compose.yml up -d --build
+
+services:
+  agent:
+    build:
+      context: ../deploy-agent
+    image: ghcr.io/${GHCR_OWNER:-CHANGE_ME}/deploy-agent:${AGENT_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET}
+      SERVICES_DIR: /services
+      ALLOWED_IMAGE_PREFIXES: ${ALLOWED_IMAGE_PREFIXES:-ghcr.io/}
+      GHCR_USER: ${GHCR_USER:-}
+      GHCR_TOKEN: ${GHCR_TOKEN:-}
+      PORT: "8080"
+      DATA_DIR: /data
+      LOG_RETENTION: ${LOG_RETENTION:-100}
+      READ_TOKEN: ${READ_TOKEN:-}
+      HOOK_TIMEOUT: ${HOOK_TIMEOUT:-60}
+      NOTIFY_WEBHOOK_URLS: ${NOTIFY_WEBHOOK_URLS:-}
+      NOTIFY_TEMPLATE: ${NOTIFY_TEMPLATE:-}
+      NOTIFY_CONTENT_TYPE: ${NOTIFY_CONTENT_TYPE:-application/json}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ../services:/services
+      - agent-data:/data
+    networks:
+      - proxy
+    expose:
+      - "8080"
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    volumes:
+      - ../nginx/conf.d:/etc/nginx/conf.d:ro
+      - nginx-certs:/etc/nginx/certs:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - agent
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true
+
+volumes:
+  agent-data:
+  nginx-certs:

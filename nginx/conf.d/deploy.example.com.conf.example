@@ -1,0 +1,31 @@
+# Copy to deploy.YOUR_DOMAIN.conf and replace the placeholders.
+# This vhost exposes the deploy agent's webhook + history API.
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name deploy.YOUR_DOMAIN;
+
+    # Reuse your existing Let's Encrypt / certbot configuration, e.g.:
+    # ssl_certificate     /etc/nginx/certs/fullchain.pem;
+    # ssl_certificate_key /etc/nginx/certs/privkey.pem;
+
+    location / {
+        proxy_pass http://agent:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # The agent's deploy path can take a while (pull + up).
+        proxy_read_timeout 300s;
+    }
+}
+
+# HTTP -> HTTPS redirect (adjust to your setup).
+server {
+    listen 80;
+    listen [::]:80;
+    server_name deploy.YOUR_DOMAIN;
+    return 301 https://$host$request_uri;
+}

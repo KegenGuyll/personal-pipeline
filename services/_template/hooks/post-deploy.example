@@ -1,0 +1,11 @@
+#!/bin/sh
+# Rename this file to `post-deploy` and `chmod +x` to enable it.
+# Runs AFTER `docker compose up`. $DEPLOY_STATUS is `success` or `failed`.
+# A non-zero exit is logged as a warning and does NOT flip a successful deploy.
+set -eu
+
+echo "post-deploy: $DEPLOY_PROJECT status=$DEPLOY_STATUS tag=$DEPLOY_TAG"
+
+# Example: wait for the service to become healthy before considering it live.
+# curl -fsS --retry 30 --retry-delay 2 --retry-connrefused \
+#   http://YOUR_SERVICE:8080/health

@@ -1,0 +1,19 @@
+# Local env / secrets (never commit)
+.env
+stack/.env
+services/*/.env
+services/*/.env.tmp
+deploy-agent/data/
+
+# Go tooling caches
+deploy-agent/.gocache/
+deploy-agent/.gotmp/
+deploy-agent/.gomodcache/
+
+# Build artifacts
+deploy-agent/deploy-agent
+*.test
+
+# OS / editor
+.DS_Store
+*.swp
