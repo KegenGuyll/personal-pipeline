@@ -150,11 +150,13 @@ async function submitAdd(e) {
   }
 
   const form = e.target;
+  // Use elements.namedItem: direct `form.name` etc. collides with the form's
+  // own properties (and is unsupported in some engines).
   const body = {
-    name: form.name.value.trim(),
-    image: form.image.value.trim(),
-    port: parseInt(form.port.value, 10) || 0,
-    hostname: form.hostname.value.trim() || undefined,
+    name: form.elements.namedItem("name").value.trim(),
+    image: form.elements.namedItem("image").value.trim(),
+    port: parseInt(form.elements.namedItem("port").value, 10) || 0,
+    hostname: form.elements.namedItem("hostname").value.trim() || undefined,
   };
 
   const { status, data } = await api("/services", {
@@ -163,7 +165,7 @@ async function submitAdd(e) {
 
   if (status === 201) {
     form.reset();
-    form.port.value = "3000";
+    form.elements.namedItem("port").value = "3000";
     await loadServices();
     return;
   }
@@ -192,31 +194,29 @@ async function submitOnboard(e) {
   }
 
   const form = e.target;
-  let env = {};
-  const envText = form.env.value.trim();
-  if (envText) {
-    try {
-      env = JSON.parse(envText);
-    } catch (_) {
-      showOnboardError('Env must be valid JSON, e.g. {"API_KEY":"..."}.');
-      return;
-    }
-    if (typeof env !== "object" || env === null || Array.isArray(env)) {
-      showOnboardError('Env must be a JSON object, e.g. {"API_KEY":"..."}.');
-      return;
-    }
+  const repoSelect = $("#repo");
+  const repo = repoSelect.value === "__custom__"
+    ? $("#repo-custom").value.trim()
+    : repoSelect.value;
+  if (!repo) {
+    showOnboardError("Pick a repository (or choose 'Type a repository manually…').");
+    return;
   }
 
+  // Canonical form-control access (see submitAdd).
+  const el = (name) => form.elements.namedItem(name);
+  const val = (name) => (el(name) ? el(name).value.trim() : "");
+
   const body = {
-    repo: form.repo.value.trim(),
-    service: form.service.value.trim() || undefined,
-    image: form.image.value.trim() || undefined,
-    port: parseInt(form.port.value, 10) || 0,
-    hostname: form.hostname.value.trim() || undefined,
-    context: form.context.value.trim() || undefined,
-    dockerfile: form.dockerfile.value.trim() || undefined,
-    env,
-    overwrite_workflow: form.overwrite.checked,
+    repo,
+    service: val("service") || undefined,
+    image: val("image") || undefined,
+    port: parseInt(val("port"), 10) || 0,
+    hostname: val("hostname") || undefined,
+    context: val("context") || undefined,
+    dockerfile: val("dockerfile") || undefined,
+    env: buildEnv(),
+    overwrite_workflow: el("overwrite") ? el("overwrite").checked : false,
   };
 
   const { status, data } = await api("/onboard", { method: "POST", token: adminToken, body });
@@ -232,12 +232,18 @@ async function submitOnboard(e) {
   }
   if (status === 201) {
     form.reset();
-    form.port.value = "3000";
-    form.context.value = ".";
-    form.dockerfile.value = "Dockerfile";
-    form.overwrite.checked = false;
+    const el = (name) => form.elements.namedItem(name);
+    if (el("port")) el("port").value = "3000";
+    if (el("context")) el("context").value = ".";
+    if (el("dockerfile")) el("dockerfile").value = "Dockerfile";
+    if (el("overwrite")) el("overwrite").checked = false;
+    $("#repo-custom").hidden = true;
+    $("#image-hint").textContent = "";
+    $("#env-rows").innerHTML = "";
+    addEnvRow();
     renderOnboardResult(data);
     loadServices();
+    loadRepos();
     return;
   }
   const msg = data && data.error ? data.error : "Onboarding failed (status " + status + ")";
@@ -267,6 +273,122 @@ function renderOnboardResult(r) {
   );
 }
 
+// ---- onboarding: repository picker ----
+
+// Mirrors the Go defaultServiceFromRepo: lowercase, map invalid chars to '-',
+// collapse repeats, trim, cap at 63 chars.
+function defaultServiceFromRepo(repo) {
+  const base = (repo.split("/").pop() || "").toLowerCase();
+  let out = "";
+  let prevDash = false;
+  for (const ch of base) {
+    let c = ch;
+    const ok = (c >= "a" && c <= "z") || (c >= "0" && c <= "9");
+    if (!ok) c = "-";
+    if (c === "-" && prevDash) continue;
+    prevDash = c === "-";
+    out += c;
+  }
+  out = out.replace(/^-+|-+$/g, "");
+  return out.slice(0, 63);
+}
+
+function setRepoDefaults(fullName) {
+  if (!fullName) return;
+  const owner = fullName.split("/")[0].toLowerCase();
+  const service = defaultServiceFromRepo(fullName);
+  const image = "ghcr.io/" + owner + "/" + service;
+  const form = $("#onboard-form");
+  // Use elements.namedItem — unambiguous form-control access.
+  const set = (name, val) => {
+    const el = form.elements.namedItem(name);
+    if (el) el.value = val;
+  };
+  set("service", service);
+  set("hostname", service);
+  set("image", image);
+  const hint = $("#image-hint");
+  if (hint) hint.textContent = "Default image the workflow will build: " + image;
+}
+
+async function loadRepos() {
+  const select = $("#repo");
+  select.innerHTML = '<option value="">Loading repositories…</option>';
+  const token = getToken(LS_READ) || getToken(LS_ADMIN);
+  const { status, data } = await api("/onboard/repos", { token });
+
+  if (status === 404) {
+    select.innerHTML = '<option value="">Onboarding disabled (set GITHUB_APP_ID on the server)</option>';
+    select.disabled = true;
+    return;
+  }
+  if (status === 401) {
+    select.innerHTML = '<option value="">Enter a token in Settings to load repositories</option>';
+    select.disabled = true;
+    return;
+  }
+  if (status !== 200) {
+    select.innerHTML = '<option value="">Failed to load repositories</option>';
+    select.disabled = true;
+    return;
+  }
+
+  const repos = (data.repos || [])
+    .map((r) => `<option value="${esc(r.full_name)}">${esc(r.full_name)}</option>`)
+    .join("");
+  select.innerHTML =
+    '<option value="">Select a repository…</option>' +
+    repos +
+    '<option value="__custom__">Type a repository manually…</option>';
+  select.disabled = false;
+}
+
+function onRepoChange() {
+  const custom = $("#repo-custom");
+  if ($("#repo").value === "__custom__") {
+    custom.hidden = false;
+    custom.focus();
+    return;
+  }
+  custom.hidden = true;
+  setRepoDefaults($("#repo").value);
+}
+
+// ---- onboarding: env key-value rows ----
+
+function addEnvRow(key, value) {
+  const row = document.createElement("div");
+  row.className = "env-row";
+  const k = document.createElement("input");
+  k.name = "env_key";
+  k.placeholder = "KEY (e.g. API_KEY)";
+  k.value = key || "";
+  k.autocomplete = "off";
+  const v = document.createElement("input");
+  v.name = "env_value";
+  v.placeholder = "value";
+  v.value = value || "";
+  v.autocomplete = "off";
+  const rm = document.createElement("button");
+  rm.type = "button";
+  rm.className = "ghost";
+  rm.textContent = "✕";
+  rm.title = "Remove";
+  rm.addEventListener("click", () => row.remove());
+  row.append(k, v, rm);
+  $("#env-rows").appendChild(row);
+}
+
+function buildEnv() {
+  const env = {};
+  for (const row of $("#env-rows").children) {
+    const key = row.querySelector('[name="env_key"]').value.trim();
+    const val = row.querySelector('[name="env_value"]').value;
+    if (key) env[key] = val;
+  }
+  return env;
+}
+
 // Settings wiring
 $("#settings-toggle").addEventListener("click", () => {
   const s = $("#settings");
@@ -279,6 +401,7 @@ $("#save-tokens").addEventListener("click", () => {
   $("#settings").hidden = true;
   hideBanner();
   loadServices();
+  loadRepos();
 });
 
 // Pre-fill token fields on load so the user can see whether a token is set.
@@ -288,5 +411,14 @@ $("#admin-token").value = getToken(LS_ADMIN);
 $("#refresh").addEventListener("click", loadServices);
 $("#add-form").addEventListener("submit", submitAdd);
 $("#onboard-form").addEventListener("submit", submitOnboard);
+$("#repo").addEventListener("change", onRepoChange);
+$("#repo-refresh").addEventListener("click", loadRepos);
+$("#env-add").addEventListener("click", () => addEnvRow());
+$("#repo-custom").addEventListener("input", () => {
+  const repo = $("#repo-custom").value.trim();
+  if (repo) setRepoDefaults(repo);
+});
 
 loadServices();
+loadRepos();
+addEnvRow();

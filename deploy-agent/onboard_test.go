@@ -21,6 +21,8 @@ type fakeGithub struct {
 	fileErr       error
 	secretErr     error
 	prErr         error
+	repos         []githubRepo
+	reposErr      error
 	secretValues  map[string]string
 	prParams      *workflowPRParams
 }
@@ -48,6 +50,13 @@ func (f *fakeGithub) setSecret(_ context.Context, _, _, name, value string) erro
 	}
 	f.secretValues[name] = value
 	return nil
+}
+
+func (f *fakeGithub) listRepos(_ context.Context) ([]githubRepo, error) {
+	if f.reposErr != nil {
+		return nil, f.reposErr
+	}
+	return f.repos, nil
 }
 
 func (f *fakeGithub) openWorkflowPR(_ context.Context, _, _ string, p workflowPRParams) (workflowPRResult, error) {
@@ -173,6 +182,60 @@ func TestHandleOnboardDisabled(t *testing.T) {
 	}
 	if !strings.Contains(out["error"].(string), "disabled") {
 		t.Fatalf("error = %v", out["error"])
+	}
+}
+
+func TestHandleListOnboardRepos(t *testing.T) {
+	gh := &fakeGithub{repos: []githubRepo{
+		{Name: "web", FullName: "alice/web"},
+		{Name: "finance", FullName: "alice/finance"},
+	}}
+	d := newOnboardDeployer(t, gh)
+	d.cfg.ReadToken = "readtok"
+
+	req := httptest.NewRequest("GET", "/onboard/repos", nil)
+	req.Header.Set("Authorization", "Bearer readtok")
+	w := httptest.NewRecorder()
+	d.handleListOnboardRepos(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, body = %s", w.Code, w.Body.String())
+	}
+	var out struct {
+		Repos []githubRepo `json:"repos"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Repos) != 2 || out.Repos[0].FullName != "alice/finance" {
+		t.Fatalf("repos = %+v", out.Repos)
+	}
+
+	// Unauthorized without a read token.
+	req2 := httptest.NewRequest("GET", "/onboard/repos", nil)
+	w2 := httptest.NewRecorder()
+	d.handleListOnboardRepos(w2, req2)
+	if w2.Code != http.StatusUnauthorized {
+		t.Fatalf("code = %d, want 401", w2.Code)
+	}
+
+	// Disabled when the app client is missing.
+	d.gh = nil
+	req3 := httptest.NewRequest("GET", "/onboard/repos", nil)
+	req3.Header.Set("Authorization", "Bearer readtok")
+	w3 := httptest.NewRecorder()
+	d.handleListOnboardRepos(w3, req3)
+	if w3.Code != http.StatusNotFound {
+		t.Fatalf("code = %d, want 404", w3.Code)
+	}
+
+	// Upstream failure -> 502.
+	d.gh = &fakeGithub{reposErr: errors.New("boom")}
+	req4 := httptest.NewRequest("GET", "/onboard/repos", nil)
+	req4.Header.Set("Authorization", "Bearer readtok")
+	w4 := httptest.NewRecorder()
+	d.handleListOnboardRepos(w4, req4)
+	if w4.Code != http.StatusBadGateway {
+		t.Fatalf("code = %d, want 502", w4.Code)
 	}
 }
 

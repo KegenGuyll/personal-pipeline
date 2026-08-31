@@ -37,6 +37,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /hooks/deploy", d.handleDeploy)
 	mux.HandleFunc("POST /onboard", d.handleOnboard)
+	mux.HandleFunc("GET /onboard/repos", d.handleListOnboardRepos)
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("GET /deployments", d.handleListDeployments)
 	mux.HandleFunc("GET /deployments/{id}", d.handleGetDeployment)

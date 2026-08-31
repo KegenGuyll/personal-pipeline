@@ -16,6 +16,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -38,10 +39,21 @@ type githubClient interface {
 	// encrypted client-side with the repo's public key (libsodium sealed box).
 	setSecret(ctx context.Context, owner, repo, name, value string) error
 
+	// listRepos returns every repository the app's installation can see
+	// (full_name + name), sorted by full name. Powers the dashboard's
+	// repository dropdown.
+	listRepos(ctx context.Context) ([]githubRepo, error)
+
 	// openWorkflowPR creates a branch from the base branch, commits the given
 	// deploy.yml content to it, and opens a PR. It NEVER merges — the PR is
 	// left open for human review.
 	openWorkflowPR(ctx context.Context, owner, repo string, p workflowPRParams) (workflowPRResult, error)
+}
+
+// githubRepo is the minimal repository info the dashboard needs.
+type githubRepo struct {
+	Name     string `json:"name"`
+	FullName string `json:"full_name"`
 }
 
 // workflowPRParams is everything needed to open the onboarding PR.
@@ -240,6 +252,42 @@ func (c *githubAppClient) hasFile(ctx context.Context, owner, repo, ref, path st
 		return false, err
 	}
 	return true, nil
+}
+
+func (c *githubAppClient) listRepos(ctx context.Context) ([]githubRepo, error) {
+	tok, err := c.tokenForInstallation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var repos []githubRepo
+	next := "/installation/repositories?per_page=100"
+	for page := 0; page < 10 && next != ""; page++ {
+		var out struct {
+			Repositories []githubRepo `json:"repositories"`
+		}
+		resp, err := c.doJSON(ctx, http.MethodGet, next, tok, nil, &out)
+		if err != nil {
+			return nil, fmt.Errorf("list installation repositories: %w", err)
+		}
+		repos = append(repos, out.Repositories...)
+		next = nextLink(resp.Header.Get("Link"))
+	}
+	sort.Slice(repos, func(i, j int) bool { return repos[i].FullName < repos[j].FullName })
+	return repos, nil
+}
+
+// nextLink extracts the URL of the next page from a GitHub Link header.
+func nextLink(linkHeader string) string {
+	for _, part := range strings.Split(linkHeader, ",") {
+		seg := strings.SplitN(strings.TrimSpace(part), ";", 2)
+		if len(seg) != 2 {
+			continue
+		}
+		if strings.Contains(seg[1], `rel="next"`) {
+			return strings.Trim(strings.TrimSpace(seg[0]), "<>")
+		}
+	}
+	return ""
 }
 
 func (c *githubAppClient) setSecret(ctx context.Context, owner, repo, name, value string) error {

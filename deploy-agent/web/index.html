@@ -62,15 +62,22 @@
       <div class="grid">
         <label>
           Repo
-          <input name="repo" required placeholder="owner/repo">
+          <div class="repo-row">
+            <select id="repo" name="repo">
+              <option value="">Loading repositories…</option>
+            </select>
+            <button type="button" id="repo-refresh" class="ghost" title="Refresh repository list">↻</button>
+          </div>
+          <input id="repo-custom" name="repo-custom" placeholder="owner/repo" hidden>
         </label>
         <label>
           Service
-          <input name="service" placeholder="defaults to the repo name">
+          <input name="service" placeholder="auto: from the repo name (e.g. my-service)">
         </label>
         <label>
           Image
           <input name="image" placeholder="ghcr.io/owner/my-service">
+          <span class="hint" id="image-hint"></span>
         </label>
         <label>
           Port
@@ -78,20 +85,23 @@
         </label>
         <label>
           Hostname
-          <input name="hostname" placeholder="defaults to the service name">
+          <input name="hostname" placeholder="auto: same as the service name">
         </label>
         <label>
           Dockerfile (relative to context)
           <input name="dockerfile" value="Dockerfile" placeholder="Dockerfile">
+          <span class="hint">Path to the Dockerfile, relative to the context folder.</span>
         </label>
         <label>
           Context
           <input name="context" value="." placeholder=".">
+          <span class="hint">Build folder inside the repo — "." = repo root. Use e.g. "app" if your Dockerfile is at app/Dockerfile.</span>
         </label>
       </div>
       <label>
-        Env (JSON, optional — becomes the SERVICE_ENV secret)
-        <textarea name="env" rows="4" placeholder='{"API_KEY":"...","DATABASE_URL":"..."}'></textarea>
+        Env (key-value — becomes the SERVICE_ENV secret)
+        <div id="env-rows"></div>
+        <button type="button" id="env-add" class="ghost">+ Add key</button>
       </label>
       <div class="row">
         <label class="check">
@@ -111,30 +121,37 @@
   </section>
 
   <section>
-    <h2>Add service</h2>
-    <form id="add-form" class="card form">
-      <div class="grid">
-        <label>
-          Name
-          <input name="name" required pattern="[a-z][a-z0-9-]*" placeholder="my-service">
-        </label>
-        <label>
-          Image
-          <input name="image" required placeholder="ghcr.io/owner/my-service">
-        </label>
-        <label>
-          Port
-          <input name="port" type="number" min="1" max="65535" value="3000">
-        </label>
-        <label>
-          Hostname
-          <input name="hostname" placeholder="my-service (Tailscale MagicDNS)">
-        </label>
-      </div>
-      <button type="submit">Add service</button>
-      <p class="hint">Creates a private (Tailscale) service. Requires the admin token.</p>
-      <p id="add-error" class="error" hidden></p>
-    </form>
+    <details class="advanced" id="advanced-services">
+      <summary>Add service (manual — no GitHub workflow)</summary>
+      <form id="add-form" class="card form">
+        <div class="grid">
+          <label>
+            Name
+            <input name="name" required pattern="[a-z][a-z0-9-]*" placeholder="my-service">
+          </label>
+          <label>
+            Image
+            <input name="image" required placeholder="ghcr.io/owner/my-service">
+          </label>
+          <label>
+            Port
+            <input name="port" type="number" min="1" max="65535" value="3000">
+          </label>
+          <label>
+            Hostname
+            <input name="hostname" placeholder="my-service (Tailscale MagicDNS)">
+          </label>
+        </div>
+        <button type="submit">Add service</button>
+        <p class="hint">
+          Manual path — only touches the server, no GitHub wiring. Use for services
+          without a GitHub build (third-party images, manual webhook deploys, or repos
+          the onboarding app can't reach). Prefer "Onboard project" above for new GitHub
+          projects. Requires the admin token.
+        </p>
+        <p id="add-error" class="error" hidden></p>
+      </form>
+    </details>
   </section>
 
   <script src="app.js"></script>
