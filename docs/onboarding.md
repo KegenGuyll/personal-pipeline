@@ -82,14 +82,14 @@ From the dashboard (`https://deploy.<domain>/ui`), **Onboard project**:
 
 | Field | Meaning | Default |
 |---|---|---|
-| Repo | `owner/repo` (required) | — |
+| Repo | dropdown of every repo the app can see (or "type a repo manually") | — |
 | Service | compose project / directory name | repo name, lowercased (`My_App` → `my-app`) |
-| Image | image the workflow will build/push | `ghcr.io/<owner-lower>/<service>` |
+| Image | image the workflow will build/push (auto-filled from repo) | `ghcr.io/<owner-lower>/<service>` |
 | Port | container port | `3000` |
 | Hostname | Tailscale MagicDNS hostname | service name |
 | Context | build context for the workflow | `.` |
 | Dockerfile | Dockerfile path relative to context | `Dockerfile` |
-| Env | JSON object → `SERVICE_ENV` secret | `{}` |
+| Env | key-value rows → serialized to JSON as the `SERVICE_ENV` secret | `{}` |
 | Replace existing deploy.yml | allow updating an existing workflow | off |
 
 Or via API:

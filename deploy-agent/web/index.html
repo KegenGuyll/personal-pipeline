@@ -62,7 +62,13 @@
       <div class="grid">
         <label>
           Repo
-          <input name="repo" required placeholder="owner/repo">
+          <div class="repo-row">
+            <select id="repo" name="repo">
+              <option value="">Loading repositories…</option>
+            </select>
+            <button type="button" id="repo-refresh" class="ghost" title="Refresh repository list">↻</button>
+          </div>
+          <input id="repo-custom" name="repo-custom" placeholder="owner/repo" hidden>
         </label>
         <label>
           Service
@@ -71,6 +77,7 @@
         <label>
           Image
           <input name="image" placeholder="ghcr.io/owner/my-service">
+          <span class="hint" id="image-hint"></span>
         </label>
         <label>
           Port
@@ -90,8 +97,9 @@
         </label>
       </div>
       <label>
-        Env (JSON, optional — becomes the SERVICE_ENV secret)
-        <textarea name="env" rows="4" placeholder='{"API_KEY":"...","DATABASE_URL":"..."}'></textarea>
+        Env (key-value — becomes the SERVICE_ENV secret)
+        <div id="env-rows"></div>
+        <button type="button" id="env-add" class="ghost">+ Add key</button>
       </label>
       <div class="row">
         <label class="check">

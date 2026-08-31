@@ -35,21 +35,25 @@ validates the image against `ALLOWED_IMAGE_PREFIXES` just like a webhook deploy.
 The "Onboard project" form (above "Add service") does the whole per-repo wiring
 in one action, using a GitHub App (see [onboarding.md](onboarding.md)):
 
+- lists every repository the app can see in a dropdown (`GET /onboard/repos`),
+  auto-filling the service name, Tailscale hostname, and default image
+  (`ghcr.io/<owner>/<service>`) when one is picked (or type a repo manually),
 - creates `services/<name>/docker-compose.yml` on the server (same template),
-- sets the project repo's `SERVICE_ENV` secret (from the Env JSON field),
+- sets the project repo's `SERVICE_ENV` secret (from the key-value Env rows —
+  empty keys are skipped, and the rows are serialized to JSON for you),
 - opens a **pull request** adding `.github/workflows/deploy.yml`.
 
 The PR is never auto-merged — the result panel shows the PR link and an
 "awaiting your review" notice; merge it to activate deploys. A warning is shown
 if the repo has no Dockerfile at the given `context`/`dockerfile` path (the
 first build will fail until one is added). Requires `GITHUB_APP_ID` +
-`GITHUB_APP_PRIVATE_KEY_B64` on the server; otherwise the endpoint returns 404.
+`GITHUB_APP_PRIVATE_KEY_B64` on the server; otherwise the endpoints return 404.
 
 ## Auth
 
 | Scope | Endpoints | Token |
 |---|---|---|
-| Read | `GET /services`, `GET /deployments`, `GET /deployments/{id}` | `READ_TOKEN` |
+| Read | `GET /services`, `GET /deployments`, `GET /deployments/{id}`, `GET /onboard/repos` | `READ_TOKEN` |
 | Write | `POST /services`, `POST /onboard` | `ADMIN_TOKEN` |
 
 - Both tokens are sent as `Authorization: Bearer <token>` and stored by the
@@ -74,6 +78,9 @@ token-gated regardless.
 ```sh
 # list services
 curl -H "Authorization: Bearer $READ_TOKEN" https://deploy.<domain>/services
+
+# list repos the onboarding GitHub App can see (read)
+curl -H "Authorization: Bearer $READ_TOKEN" https://deploy.<domain>/onboard/repos
 
 # add a service (admin)
 curl -X POST https://deploy.<domain>/services \

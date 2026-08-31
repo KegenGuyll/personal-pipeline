@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"text/template"
 )
@@ -93,6 +94,30 @@ func renderDeployWorkflow(d workflowData) (string, error) {
 		return "", err
 	}
 	return b.String(), nil
+}
+
+// handleListOnboardRepos returns every repo the onboarding GitHub App can see,
+// for the dashboard's repository dropdown. Read-gated like GET /services.
+func (d *deployer) handleListOnboardRepos(w http.ResponseWriter, r *http.Request) {
+	if !d.authorizeRead(w, r) {
+		return
+	}
+	if d.gh == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": "onboarding disabled — set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_B64 on the server",
+		})
+		return
+	}
+	repos, err := d.gh.listRepos(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	if repos == nil {
+		repos = []githubRepo{}
+	}
+	sort.Slice(repos, func(i, j int) bool { return repos[i].FullName < repos[j].FullName })
+	writeJSON(w, http.StatusOK, map[string]any{"repos": repos})
 }
 
 func (d *deployer) handleOnboard(w http.ResponseWriter, r *http.Request) {

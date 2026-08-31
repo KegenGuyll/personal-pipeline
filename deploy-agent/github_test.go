@@ -281,3 +281,49 @@ func TestGithubAPIErrorNotFound(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestListReposPaginatesAndSorts(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app/installations/5/access_tokens":
+			writeJSON(w, http.StatusCreated, map[string]string{
+				"token": "inst-tok", "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+			})
+		case "/installation/repositories":
+			if r.URL.Query().Get("page") == "2" {
+				writeJSON(w, http.StatusOK, map[string]any{
+					"repositories": []map[string]string{{"name": "api", "full_name": "alice/api"}},
+				})
+				return
+			}
+			w.Header().Set("Link", `</installation/repositories?per_page=100&page=2>; rel="next"`)
+			writeJSON(w, http.StatusOK, map[string]any{
+				"repositories": []map[string]string{{"name": "web", "full_name": "alice/web"}},
+			})
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := &githubAppClient{appID: 1, key: testAppKey(t), installationID: 5, apiURL: srv.URL, http: srv.Client()}
+	repos, err := c.listRepos(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repos) != 2 {
+		t.Fatalf("repos = %+v, want 2 (page 1 + next link)", repos)
+	}
+	if repos[0].FullName != "alice/api" || repos[1].FullName != "alice/web" {
+		t.Fatalf("expected sorted by full name: %+v", repos)
+	}
+}
+
+func TestNextLink(t *testing.T) {
+	if got := nextLink(`</a>; rel="prev", </b>; rel="next"`); got != "/b" {
+		t.Fatalf("next = %q", got)
+	}
+	if got := nextLink(`</a>; rel="last"`); got != "" {
+		t.Fatalf("next = %q, want empty", got)
+	}
+}
