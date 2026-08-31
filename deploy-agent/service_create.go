@@ -117,29 +117,10 @@ func (d *deployer) handleCreateService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, err := renderServiceCompose(&spec)
-	if err != nil {
+	if err := createServiceOnDisk(d.cfg, &spec); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-
-	dir := filepath.Join(d.cfg.ServicesDir, spec.Name)
-	if err := os.MkdirAll(filepath.Join(dir, "hooks"), 0755); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	composePath := filepath.Join(dir, "docker-compose.yml")
-	tmp := composePath + ".tmp"
-	if err := os.WriteFile(tmp, []byte(content), 0644); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	if err := os.Rename(tmp, composePath); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-
-	logEvent("service.added", map[string]any{"project": spec.Name, "image": spec.Image, "access": "private"})
 
 	writeJSON(w, http.StatusCreated, ServiceInfo{
 		Name:     spec.Name,

@@ -1,0 +1,414 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+
+	"golang.org/x/crypto/nacl/box"
+)
+
+// githubClient is the small GitHub surface the onboarding endpoint needs. It is
+// an interface so tests can inject a fake and exercise the handler without any
+// network access.
+type githubClient interface {
+	// repoInfo returns the repo's default branch. Any error means the app
+	// cannot see the repo (not installed, renamed, or insufficient access).
+	repoInfo(ctx context.Context, owner, repo string) (defaultBranch string, err error)
+
+	// hasFile reports whether a file exists at path on the given ref (branch).
+	hasFile(ctx context.Context, owner, repo, ref, path string) (bool, error)
+
+	// setSecret creates or updates a repo-level Actions secret. Secrets are
+	// encrypted client-side with the repo's public key (libsodium sealed box).
+	setSecret(ctx context.Context, owner, repo, name, value string) error
+
+	// openWorkflowPR creates a branch from the base branch, commits the given
+	// deploy.yml content to it, and opens a PR. It NEVER merges — the PR is
+	// left open for human review.
+	openWorkflowPR(ctx context.Context, owner, repo string, p workflowPRParams) (workflowPRResult, error)
+}
+
+// workflowPRParams is everything needed to open the onboarding PR.
+type workflowPRParams struct {
+	Service    string // used to name the branch: pipeline/onboard-<service>
+	BaseBranch string
+	Content    string // rendered deploy.yml
+	Title      string
+	Body       string
+}
+
+// workflowPRResult describes the opened PR.
+type workflowPRResult struct {
+	Number int
+	URL    string
+	Branch string
+}
+
+// githubAppClient is the real implementation backed by the GitHub REST API
+// using a GitHub App's credentials (app ID + private key) to mint installation
+// tokens. The agent only ever acts on the app's behalf, never with a user PAT.
+type githubAppClient struct {
+	appID          int64
+	key            *rsa.PrivateKey
+	installationID int64 // 0 = resolve automatically via pipelineOwner
+	pipelineOwner  string
+	apiURL         string
+	http           *http.Client
+
+	mu        sync.Mutex
+	token     string
+	expiresAt time.Time
+}
+
+// newGithubAppClient builds the client from config. It returns (nil, nil) when
+// onboarding is not configured (endpoint stays disabled), and an error when it
+// is partially configured (e.g. App ID but no key).
+func newGithubAppClient(cfg *Config) (*githubAppClient, error) {
+	if cfg.GithubAppID == 0 && cfg.GithubAppPrivateKeyB64 == "" {
+		return nil, nil
+	}
+	if cfg.GithubAppID == 0 || cfg.GithubAppPrivateKeyB64 == "" {
+		return nil, errors.New("GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_B64 must both be set to enable onboarding")
+	}
+	pemBytes, err := base64.StdEncoding.DecodeString(strings.TrimSpace(cfg.GithubAppPrivateKeyB64))
+	if err != nil {
+		return nil, fmt.Errorf("decode GITHUB_APP_PRIVATE_KEY_B64: %w", err)
+	}
+	key, err := parseRSAPrivateKey(pemBytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse GitHub App private key: %w", err)
+	}
+	return &githubAppClient{
+		appID:          cfg.GithubAppID,
+		key:            key,
+		installationID: cfg.GithubAppInstallationID,
+		pipelineOwner:  cfg.PipelineOwner,
+		apiURL:         strings.TrimRight(envOr("GITHUB_API_URL", "https://api.github.com"), "/"),
+		http:           &http.Client{Timeout: 30 * time.Second},
+	}, nil
+}
+
+func parseRSAPrivateKey(pemBytes []byte) (*rsa.PrivateKey, error) {
+	block, _ := pem.Decode(pemBytes)
+	if block == nil {
+		return nil, errors.New("no PEM block found")
+	}
+	if k, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
+		return k, nil
+	}
+	if k, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
+		if rsaKey, ok := k.(*rsa.PrivateKey); ok {
+			return rsaKey, nil
+		}
+		return nil, errors.New("PKCS8 key is not RSA (GitHub App keys must be RSA)")
+	}
+	return nil, errors.New("unsupported private key format (expected PKCS1 or PKCS8 RSA)")
+}
+
+// ---- auth ----
+
+// appJWT builds a short-lived RS256 JWT for the app itself, used only to mint
+// installation tokens.
+func (c *githubAppClient) appJWT(now time.Time) (string, error) {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(
+		`{"iat":%d,"exp":%d,"iss":"%d"}`,
+		now.Add(-60*time.Second).Unix(), now.Add(10*time.Minute).Unix(), c.appID,
+	)))
+	signing := header + "." + payload
+	digest := sha256.Sum256([]byte(signing))
+	sig, err := rsa.SignPKCS1v15(rand.Reader, c.key, crypto.SHA256, digest[:])
+	if err != nil {
+		return "", err
+	}
+	return signing + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+}
+
+// tokenForInstallation returns a cached (or freshly minted) installation access
+// token. The token is the credential used for every repo-scoped API call.
+func (c *githubAppClient) tokenForInstallation(ctx context.Context) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.token != "" && time.Now().Before(c.expiresAt.Add(-60*time.Second)) {
+		return c.token, nil
+	}
+
+	jwt, err := c.appJWT(time.Now())
+	if err != nil {
+		return "", fmt.Errorf("mint app jwt: %w", err)
+	}
+	instID := c.installationID
+	if instID == 0 {
+		instID, err = c.resolveInstallationID(ctx, jwt)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	var out struct {
+		Token     string `json:"token"`
+		ExpiresAt string `json:"expires_at"`
+	}
+	if _, err := c.doJSON(ctx, http.MethodPost, fmt.Sprintf("/app/installations/%d/access_tokens", instID), jwt, nil, &out); err != nil {
+		return "", fmt.Errorf("mint installation token: %w", err)
+	}
+	c.token = out.Token
+	if t, err := time.Parse(time.RFC3339, out.ExpiresAt); err == nil {
+		c.expiresAt = t
+	}
+	return c.token, nil
+}
+
+func (c *githubAppClient) resolveInstallationID(ctx context.Context, jwt string) (int64, error) {
+	var insts []struct {
+		ID      int64 `json:"id"`
+		Account struct {
+			Login string `json:"login"`
+		} `json:"account"`
+	}
+	if _, err := c.doJSON(ctx, http.MethodGet, "/app/installations", jwt, nil, &insts); err != nil {
+		return 0, err
+	}
+	if len(insts) == 0 {
+		return 0, errors.New("GitHub App has no installations — install it on your account first")
+	}
+	if c.pipelineOwner != "" {
+		for _, i := range insts {
+			if strings.EqualFold(i.Account.Login, c.pipelineOwner) {
+				return i.ID, nil
+			}
+		}
+	}
+	if len(insts) == 1 {
+		return insts[0].ID, nil
+	}
+	return 0, fmt.Errorf(
+		"GitHub App has %d installations; set GITHUB_APP_INSTALLATION_ID (none matched PIPELINE_OWNER=%q)",
+		len(insts), c.pipelineOwner,
+	)
+}
+
+// ---- GitHub API operations ----
+
+func (c *githubAppClient) repoInfo(ctx context.Context, owner, repo string) (string, error) {
+	tok, err := c.tokenForInstallation(ctx)
+	if err != nil {
+		return "", err
+	}
+	var out struct {
+		DefaultBranch string `json:"default_branch"`
+	}
+	if _, err := c.doJSON(ctx, http.MethodGet, "/repos/"+owner+"/"+repo, tok, nil, &out); err != nil {
+		return "", fmt.Errorf("fetch repo %s/%s: %w", owner, repo, err)
+	}
+	if out.DefaultBranch == "" {
+		return "", errors.New("repo has no default branch")
+	}
+	return out.DefaultBranch, nil
+}
+
+func (c *githubAppClient) hasFile(ctx context.Context, owner, repo, ref, path string) (bool, error) {
+	tok, err := c.tokenForInstallation(ctx)
+	if err != nil {
+		return false, err
+	}
+	u := "/repos/" + owner + "/" + repo + "/contents/" + escapePath(path)
+	if ref != "" {
+		u += "?ref=" + url.QueryEscape(ref)
+	}
+	if _, err := c.doJSON(ctx, http.MethodGet, u, tok, nil, nil); err != nil {
+		var ge *githubAPIError
+		if errors.As(err, &ge) && ge.Status == http.StatusNotFound {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func (c *githubAppClient) setSecret(ctx context.Context, owner, repo, name, value string) error {
+	tok, err := c.tokenForInstallation(ctx)
+	if err != nil {
+		return err
+	}
+	var pk struct {
+		KeyID string `json:"key_id"`
+		Key   string `json:"key"`
+	}
+	if _, err := c.doJSON(ctx, http.MethodGet, "/repos/"+owner+"/"+repo+"/actions/secrets/public-key", tok, nil, &pk); err != nil {
+		return fmt.Errorf("fetch repo public key: %w", err)
+	}
+	encrypted, err := sealBox(pk.Key, []byte(value))
+	if err != nil {
+		return err
+	}
+	body := map[string]string{"encrypted_value": encrypted, "key_id": pk.KeyID}
+	if _, err := c.doJSON(ctx, http.MethodPut, "/repos/"+owner+"/"+repo+"/actions/secrets/"+name, tok, body, nil); err != nil {
+		return fmt.Errorf("set secret %s: %w", name, err)
+	}
+	return nil
+}
+
+func (c *githubAppClient) openWorkflowPR(ctx context.Context, owner, repo string, p workflowPRParams) (workflowPRResult, error) {
+	tok, err := c.tokenForInstallation(ctx)
+	if err != nil {
+		return workflowPRResult{}, err
+	}
+
+	// 1. HEAD sha of the base branch (proves the repo has commits).
+	var ref struct {
+		Object struct {
+			SHA string `json:"sha"`
+		} `json:"object"`
+	}
+	if _, err := c.doJSON(ctx, http.MethodGet, "/repos/"+owner+"/"+repo+"/git/ref/heads/"+p.BaseBranch, tok, nil, &ref); err != nil {
+		return workflowPRResult{}, fmt.Errorf("resolve base branch %q: %w", p.BaseBranch, err)
+	}
+	if ref.Object.SHA == "" {
+		return workflowPRResult{}, errors.New("repo has no commits on " + p.BaseBranch + " — make an initial commit before onboarding")
+	}
+
+	// 2. Create the onboarding branch; on name collision retry with a suffix.
+	branch := "pipeline/onboard-" + p.Service
+	created := false
+	for i := 0; i < 10; i++ {
+		body := map[string]string{"ref": "refs/heads/" + branch, "sha": ref.Object.SHA}
+		if _, err := c.doJSON(ctx, http.MethodPost, "/repos/"+owner+"/"+repo+"/git/refs", tok, body, nil); err == nil {
+			created = true
+			break
+		}
+		var ge *githubAPIError
+		if errors.As(err, &ge) && ge.Status == http.StatusUnprocessableEntity {
+			branch = fmt.Sprintf("pipeline/onboard-%s-%d", p.Service, i+2)
+			continue
+		}
+		return workflowPRResult{}, fmt.Errorf("create branch %q: %w", branch, err)
+	}
+	if !created {
+		return workflowPRResult{}, errors.New("create branch: too many name collisions")
+	}
+
+	// 3. Commit the workflow file to the branch.
+	commit := map[string]any{
+		"message": "Add pipeline deploy workflow",
+		"content": base64.StdEncoding.EncodeToString([]byte(p.Content)),
+		"branch":  branch,
+	}
+	if _, err := c.doJSON(ctx, http.MethodPut, "/repos/"+owner+"/"+repo+"/contents/.github/workflows/deploy.yml", tok, commit, nil); err != nil {
+		return workflowPRResult{}, fmt.Errorf("commit workflow file: %w", err)
+	}
+
+	// 4. Open the PR. Deliberately no merge — a human reviews it.
+	var out struct {
+		Number  int    `json:"number"`
+		HTMLURL string `json:"html_url"`
+	}
+	pr := map[string]string{"title": p.Title, "head": branch, "base": p.BaseBranch, "body": p.Body}
+	if _, err := c.doJSON(ctx, http.MethodPost, "/repos/"+owner+"/"+repo+"/pulls", tok, pr, &out); err != nil {
+		return workflowPRResult{}, fmt.Errorf("open pull request: %w", err)
+	}
+	return workflowPRResult{Number: out.Number, URL: out.HTMLURL, Branch: branch}, nil
+}
+
+// ---- helpers ----
+
+// sealBox encrypts msg for the repo's Actions-secrets public key using a
+// libsodium-style sealed box (X25519-XSalsa20-Poly1305), as required by
+// PUT /repos/{owner}/{repo}/actions/secrets/{name}. Returns base64.
+func sealBox(publicKeyB64 string, msg []byte) (string, error) {
+	pub, err := base64.StdEncoding.DecodeString(publicKeyB64)
+	if err != nil || len(pub) != 32 {
+		return "", errors.New("invalid repo public key")
+	}
+	var pk [32]byte
+	copy(pk[:], pub)
+	sealed, err := box.SealAnonymous(nil, msg, &pk, rand.Reader)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(sealed), nil
+}
+
+// escapePath percent-encodes a file path for the Contents API while keeping
+// the "/" separators intact.
+func escapePath(path string) string {
+	return (&url.URL{Path: path}).EscapedPath()
+}
+
+// githubAPIError carries the HTTP status of a failed GitHub API call.
+type githubAPIError struct {
+	Status  int
+	Message string
+	Path    string
+}
+
+func (e *githubAPIError) Error() string {
+	return fmt.Sprintf("github api %s: %s (status %d)", e.Path, e.Message, e.Status)
+}
+
+func (c *githubAppClient) doJSON(ctx context.Context, method, path, token string, body, out any) (*http.Response, error) {
+	var rd io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		rd = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.apiURL+path, rd)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", "personal-pipeline-onboarder")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		msg := readLimited(resp.Body, 512)
+		return resp, &githubAPIError{Status: resp.StatusCode, Message: msg, Path: path}
+	}
+	if out != nil {
+		_ = json.NewDecoder(resp.Body).Decode(out)
+	}
+	return resp, nil
+}
+
+func readLimited(r io.Reader, n int64) string {
+	b, _ := io.ReadAll(io.LimitReader(r, n))
+	msg := strings.TrimSpace(string(b))
+	var parsed struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(b, &parsed) == nil && parsed.Message != "" {
+		return parsed.Message
+	}
+	return msg
+}

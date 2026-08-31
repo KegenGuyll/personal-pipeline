@@ -30,12 +30,27 @@ secret — see [adding-a-service.md](adding-a-service.md)).
 The agent deliberately accepts only those fields — never raw compose — and
 validates the image against `ALLOWED_IMAGE_PREFIXES` just like a webhook deploy.
 
+## Onboarding a project
+
+The "Onboard project" form (above "Add service") does the whole per-repo wiring
+in one action, using a GitHub App (see [onboarding.md](onboarding.md)):
+
+- creates `services/<name>/docker-compose.yml` on the server (same template),
+- sets the project repo's `SERVICE_ENV` secret (from the Env JSON field),
+- opens a **pull request** adding `.github/workflows/deploy.yml`.
+
+The PR is never auto-merged — the result panel shows the PR link and an
+"awaiting your review" notice; merge it to activate deploys. A warning is shown
+if the repo has no Dockerfile at the given `context`/`dockerfile` path (the
+first build will fail until one is added). Requires `GITHUB_APP_ID` +
+`GITHUB_APP_PRIVATE_KEY_B64` on the server; otherwise the endpoint returns 404.
+
 ## Auth
 
 | Scope | Endpoints | Token |
 |---|---|---|
 | Read | `GET /services`, `GET /deployments`, `GET /deployments/{id}` | `READ_TOKEN` |
-| Write | `POST /services` | `ADMIN_TOKEN` |
+| Write | `POST /services`, `POST /onboard` | `ADMIN_TOKEN` |
 
 - Both tokens are sent as `Authorization: Bearer <token>` and stored by the
   dashboard in your browser's `localStorage` (entered once via **Settings**).
@@ -65,4 +80,19 @@ curl -X POST https://deploy.<domain>/services \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name":"my-service","image":"ghcr.io/you/my-service","port":3000,"hostname":"my-service"}'
+
+# onboard a project repo (admin; requires the onboarding GitHub App)
+curl -X POST https://deploy.<domain>/onboard \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "repo": "you/my-service",
+    "env": {"API_KEY": "..."},
+    "overwrite_workflow": false
+  }'
+# -> 201 {"repo":"you/my-service","service":"my-service","image":"ghcr.io/you/my-service",
+#        "base_branch":"main","secret":"set","compose":"created",
+#        "pr":{"number":1,"url":"https://github.com/you/my-service/pull/1",
+#              "branch":"pipeline/onboard-my-service","state":"open"}}
+# -> 409 if deploy.yml already exists (re-run with overwrite_workflow:true)
 ```

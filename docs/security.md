@@ -21,6 +21,7 @@ minimal and authenticated.
 | Read-only GHCR token | The server's pull token has `read:packages` only. |
 | Bearer read API | `GET /deployments` requires `READ_TOKEN`; disabled if unset. |
 | Bearer write API | `POST /services` (dashboard "add service") requires a separate `ADMIN_TOKEN`; disabled if unset. The agent only accepts name/image/port/hostname — never raw compose — and validates the image against the allowlist. |
+| Onboarding GitHub App | `POST /onboard` (also `ADMIN_TOKEN`) uses a dedicated GitHub App (`contents:write`, `secrets:write`, `pull-requests:write`); disabled unless `GITHUB_APP_ID` + key are configured. It creates the compose file, sets `SERVICE_ENV`, and **opens a PR that is never auto-merged** — a human reviews the added workflow before it activates. |
 
 ## Secrets flow
 
@@ -29,6 +30,13 @@ minimal and authenticated.
   then written to `services/<name>/.env`. HMAC authenticates it and TLS
   encrypts it in transit; the file itself is plaintext because the app needs it.
 - `GHCR_USER` / `GHCR_TOKEN` — read-only registry pull credentials, server only.
+- `GITHUB_APP_PRIVATE_KEY` — the onboarding app's signing key, base64 in
+  `stack/.env`. With it (plus the App ID) the agent can mint installation
+  tokens, which are scoped to the app's permissions (`contents:write`,
+  `secrets:write`, `pull-requests:write`) and expire hourly. It sits on the same
+  server that mounts the Docker socket, so it is part of the "agent is already
+  privileged" trust boundary; restrict the app's install scope to the repos you
+  will onboard if you want to limit blast radius.
 
 ## Known tradeoffs
 

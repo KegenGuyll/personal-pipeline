@@ -1,5 +1,12 @@
 # Adding a service
 
+> **Fastest path:** if you have the onboarding GitHub App wired, use the
+> dashboard's **Onboard project** form — it creates the service compose file,
+> sets the repo's `SERVICE_ENV` secret, and opens a review PR adding
+> `deploy.yml`, all without touching the project repo by hand
+> (see [onboarding.md](onboarding.md)). The manual recipe below is the
+> equivalent, step by step.
+
 Four steps. Use a unique lowercase name (`my-service`) throughout.
 
 > **Alternative:** the [dashboard](dashboard.md) can create the service compose

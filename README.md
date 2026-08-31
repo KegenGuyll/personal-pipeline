@@ -19,6 +19,10 @@ on your server to pull and run it → apps are served privately via Tailscale
 ## Features
 
 - **One reusable workflow** for every project — each repo adds a ~15-line `deploy.yml`.
+- **GitHub-App project onboarding** — onboard a new project from the dashboard
+  without touching the repo by hand: it creates the service compose file, sets
+  the `SERVICE_ENV` secret, and opens a review PR adding `deploy.yml`
+  (see [docs/onboarding.md](docs/onboarding.md)).
 - **Webhook deploy agent** (Go, single binary) with HMAC verification, image/project
   allowlists, and per-project concurrency control.
 - **Secrets from GitHub** — each service's env is stored as a `SERVICE_ENV` GitHub
@@ -38,7 +42,9 @@ on your server to pull and run it → apps are served privately via Tailscale
 
 1. **Server setup** — see [docs/setup.md](docs/setup.md): clone this repo, create the
    `proxy` network, fill `stack/.env`, `docker compose up -d --build`.
-2. **Add a service** — see [docs/adding-a-service.md](docs/adding-a-service.md).
+2. **Add a service** — see [docs/adding-a-service.md](docs/adding-a-service.md), or
+   [docs/onboarding.md](docs/onboarding.md) to onboard a project repo from the dashboard
+   with a GitHub App (compose file + `SERVICE_ENV` secret + review PR, no manual repo edits).
 3. **Wire GitHub** — create `DEPLOY_WEBHOOK_URL` / `DEPLOY_WEBHOOK_SECRET` secrets
    (org/user level), then add the `deploy.yml` snippet from
    [docs/adding-a-service.md](docs/adding-a-service.md) to each project repo.
@@ -58,6 +64,7 @@ docs/                setup, architecture, adding-a-service, hooks, logs, securit
 
 - [Setup](docs/setup.md) — one-time server + GitHub bootstrap
 - [Adding a service](docs/adding-a-service.md) — the 4-part recipe
+- [Onboarding](docs/onboarding.md) — onboard a project repo via GitHub App (no manual repo edits)
 - [Hooks & notifications](docs/hooks-and-notifications.md) — pre/post hooks + Discord/Slack/ntfy
 - [Deployment logs](docs/deployment-logs.md) — history API + log schema
 - [Dashboard](docs/dashboard.md) — view services/versions + add services

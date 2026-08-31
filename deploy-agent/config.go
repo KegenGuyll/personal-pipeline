@@ -24,6 +24,14 @@ type Config struct {
 	NotifyWebhookURLs    []string
 	NotifyTemplate       string
 	NotifyContentType    string
+
+	// GitHub App (project onboarding). Empty GITHUB_APP_ID / private key
+	// disable the POST /onboard endpoint.
+	GithubAppID             int64
+	GithubAppPrivateKeyB64  string
+	GithubAppInstallationID int64
+	PipelineOwner           string
+	PipelineRef             string
 }
 
 func loadConfig() (*Config, error) {
@@ -41,6 +49,12 @@ func loadConfig() (*Config, error) {
 		NotifyWebhookURLs: splitNonEmpty(os.Getenv("NOTIFY_WEBHOOK_URLS")),
 		NotifyTemplate:    os.Getenv("NOTIFY_TEMPLATE"),
 		NotifyContentType: envOr("NOTIFY_CONTENT_TYPE", "application/json"),
+
+		GithubAppID:             envInt64Or("GITHUB_APP_ID", 0),
+		GithubAppPrivateKeyB64:  os.Getenv("GITHUB_APP_PRIVATE_KEY_B64"),
+		GithubAppInstallationID: envInt64Or("GITHUB_APP_INSTALLATION_ID", 0),
+		PipelineOwner:           envOr("PIPELINE_OWNER", os.Getenv("GHCR_OWNER")),
+		PipelineRef:             envOr("PIPELINE_REF", "main"),
 	}
 
 	prefixes := splitNonEmpty(os.Getenv("ALLOWED_IMAGE_PREFIXES"))
@@ -65,6 +79,15 @@ func envOr(key, fallback string) string {
 func envIntOr(key string, fallback int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
+}
+
+func envInt64Or(key string, fallback int64) int64 {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			return n
 		}
 	}

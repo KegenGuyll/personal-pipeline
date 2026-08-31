@@ -34,6 +34,7 @@ type deployer struct {
 	cfg      *Config
 	hist     *history
 	notifier *notifier
+	gh       githubClient // nil => onboarding disabled
 
 	locksMu sync.Mutex
 	locks   map[string]*sync.Mutex
