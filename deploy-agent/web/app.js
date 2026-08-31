@@ -150,11 +150,13 @@ async function submitAdd(e) {
   }
 
   const form = e.target;
+  // Use elements.namedItem: direct `form.name` etc. collides with the form's
+  // own properties (and is unsupported in some engines).
   const body = {
-    name: form.name.value.trim(),
-    image: form.image.value.trim(),
-    port: parseInt(form.port.value, 10) || 0,
-    hostname: form.hostname.value.trim() || undefined,
+    name: form.elements.namedItem("name").value.trim(),
+    image: form.elements.namedItem("image").value.trim(),
+    port: parseInt(form.elements.namedItem("port").value, 10) || 0,
+    hostname: form.elements.namedItem("hostname").value.trim() || undefined,
   };
 
   const { status, data } = await api("/services", {
@@ -163,7 +165,7 @@ async function submitAdd(e) {
 
   if (status === 201) {
     form.reset();
-    form.port.value = "3000";
+    form.elements.namedItem("port").value = "3000";
     await loadServices();
     return;
   }
@@ -201,16 +203,20 @@ async function submitOnboard(e) {
     return;
   }
 
+  // Canonical form-control access (see submitAdd).
+  const el = (name) => form.elements.namedItem(name);
+  const val = (name) => (el(name) ? el(name).value.trim() : "");
+
   const body = {
     repo,
-    service: form.service.value.trim() || undefined,
-    image: form.image.value.trim() || undefined,
-    port: parseInt(form.port.value, 10) || 0,
-    hostname: form.hostname.value.trim() || undefined,
-    context: form.context.value.trim() || undefined,
-    dockerfile: form.dockerfile.value.trim() || undefined,
+    service: val("service") || undefined,
+    image: val("image") || undefined,
+    port: parseInt(val("port"), 10) || 0,
+    hostname: val("hostname") || undefined,
+    context: val("context") || undefined,
+    dockerfile: val("dockerfile") || undefined,
     env: buildEnv(),
-    overwrite_workflow: form.overwrite.checked,
+    overwrite_workflow: el("overwrite") ? el("overwrite").checked : false,
   };
 
   const { status, data } = await api("/onboard", { method: "POST", token: adminToken, body });
@@ -226,10 +232,11 @@ async function submitOnboard(e) {
   }
   if (status === 201) {
     form.reset();
-    form.port.value = "3000";
-    form.context.value = ".";
-    form.dockerfile.value = "Dockerfile";
-    form.overwrite.checked = false;
+    const el = (name) => form.elements.namedItem(name);
+    if (el("port")) el("port").value = "3000";
+    if (el("context")) el("context").value = ".";
+    if (el("dockerfile")) el("dockerfile").value = "Dockerfile";
+    if (el("overwrite")) el("overwrite").checked = false;
     $("#repo-custom").hidden = true;
     $("#image-hint").textContent = "";
     $("#env-rows").innerHTML = "";
@@ -292,10 +299,16 @@ function setRepoDefaults(fullName) {
   const service = defaultServiceFromRepo(fullName);
   const image = "ghcr.io/" + owner + "/" + service;
   const form = $("#onboard-form");
-  form.service.value = service;
-  form.hostname.value = service;
-  form.image.value = image;
-  $("#image-hint").textContent = "Default image the workflow will build: " + image;
+  // Use elements.namedItem — unambiguous form-control access.
+  const set = (name, val) => {
+    const el = form.elements.namedItem(name);
+    if (el) el.value = val;
+  };
+  set("service", service);
+  set("hostname", service);
+  set("image", image);
+  const hint = $("#image-hint");
+  if (hint) hint.textContent = "Default image the workflow will build: " + image;
 }
 
 async function loadRepos() {
