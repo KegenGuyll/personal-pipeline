@@ -82,7 +82,7 @@ From the dashboard (`https://deploy.<domain>/ui`), **Onboard project**:
 
 | Field | Meaning | Default |
 |---|---|---|
-| Repo | dropdown of every repo the app can see (or "type a repo manually") | — |
+| Repo | searchable picker of every repo the app can see (type to filter, click or Enter to pick; type any `owner/repo`) | — |
 | Service | compose project / directory name | repo name, lowercased (`My_App` → `my-app`) |
 | Image | image the workflow will build/push (auto-filled from repo) | `ghcr.io/<owner-lower>/<service>` |
 | Port | container port | `3000` |
