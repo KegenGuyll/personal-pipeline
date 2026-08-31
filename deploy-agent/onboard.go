@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -96,13 +97,29 @@ func renderDeployWorkflow(d workflowData) (string, error) {
 	return b.String(), nil
 }
 
+// onboardingConfigured reports whether the GitHub App client is usable. The
+// client can be a TYPED nil (*githubAppClient)(nil) when setup failed or was
+// skipped, which a plain interface nil check misses — a typed nil in the
+// interface makes `d.gh == nil` false and method calls panic. Guard with this
+// everywhere before touching d.gh.
+func (d *deployer) onboardingConfigured() bool {
+	if d.gh == nil {
+		return false
+	}
+	v := reflect.ValueOf(d.gh)
+	if v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		return !v.IsNil()
+	}
+	return true
+}
+
 // handleListOnboardRepos returns every repo the onboarding GitHub App can see,
 // for the dashboard's repository dropdown. Read-gated like GET /services.
 func (d *deployer) handleListOnboardRepos(w http.ResponseWriter, r *http.Request) {
 	if !d.authorizeRead(w, r) {
 		return
 	}
-	if d.gh == nil {
+	if !d.onboardingConfigured() {
 		writeJSON(w, http.StatusNotFound, map[string]string{
 			"error": "onboarding disabled — set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_B64 on the server",
 		})
@@ -110,6 +127,7 @@ func (d *deployer) handleListOnboardRepos(w http.ResponseWriter, r *http.Request
 	}
 	repos, err := d.gh.listRepos(r.Context())
 	if err != nil {
+		logEvent("onboard.repos_error", map[string]any{"error": err.Error()})
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
@@ -124,7 +142,7 @@ func (d *deployer) handleOnboard(w http.ResponseWriter, r *http.Request) {
 	if !d.authorizeWrite(w, r) {
 		return
 	}
-	if d.gh == nil {
+	if !d.onboardingConfigured() {
 		writeJSON(w, http.StatusNotFound, map[string]string{
 			"error": "onboarding disabled — set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_B64 on the server",
 		})
