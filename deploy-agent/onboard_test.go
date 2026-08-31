@@ -185,6 +185,28 @@ func TestHandleOnboardDisabled(t *testing.T) {
 	}
 }
 
+// Regression: a TYPED nil (*fakeGithub)(nil) stored in the interface must not
+// pass the plain `d.gh == nil` check and panic on method call (the original
+// 502-bad-gateway bug: a nil *githubAppClient inside the githubClient
+// interface). Both onboarding endpoints must return a clean 404 instead.
+func TestHandleOnboardTypedNilClient(t *testing.T) {
+	d := newOnboardDeployer(t, (*fakeGithub)(nil))
+
+	w, _ := onboardRequest(t, d, `{"repo":"alice/web"}`)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("onboard code = %d, want 404 (no panic)", w.Code)
+	}
+
+	d.cfg.ReadToken = "readtok"
+	req := httptest.NewRequest("GET", "/onboard/repos", nil)
+	req.Header.Set("Authorization", "Bearer readtok")
+	w2 := httptest.NewRecorder()
+	d.handleListOnboardRepos(w2, req)
+	if w2.Code != http.StatusNotFound {
+		t.Fatalf("repos code = %d, want 404 (no panic)", w2.Code)
+	}
+}
+
 func TestHandleListOnboardRepos(t *testing.T) {
 	gh := &fakeGithub{repos: []githubRepo{
 		{Name: "web", FullName: "alice/web"},

@@ -26,13 +26,18 @@ func main() {
 	}
 
 	// GitHub App client for project onboarding. Configured via GITHUB_APP_ID +
-	// GITHUB_APP_PRIVATE_KEY_B64; nil leaves POST /onboard disabled (404).
+	// GITHUB_APP_PRIVATE_KEY_B64; leaving d.gh nil keeps onboarding disabled
+	// (404). Only assign a non-nil client — assigning a nil *githubAppClient
+	// into the interface would make `d.gh == nil` false and panic on use.
 	gh, err := newGithubAppClient(cfg)
-	if err != nil {
+	switch {
+	case err != nil:
 		log.Printf("onboarding disabled: %v", err)
-		gh = nil
+	case gh == nil:
+		log.Printf("onboarding disabled: GITHUB_APP_ID / GITHUB_APP_PRIVATE_KEY_B64 not configured")
+	default:
+		d.gh = gh
 	}
-	d.gh = gh
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /hooks/deploy", d.handleDeploy)
