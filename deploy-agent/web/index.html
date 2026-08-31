@@ -90,10 +90,12 @@
         <label>
           Dockerfile (relative to context)
           <input name="dockerfile" value="Dockerfile" placeholder="Dockerfile">
+          <span class="hint">Path to the Dockerfile, relative to the context folder.</span>
         </label>
         <label>
           Context
           <input name="context" value="." placeholder=".">
+          <span class="hint">Build folder inside the repo — "." = repo root. Use e.g. "app" if your Dockerfile is at app/Dockerfile.</span>
         </label>
       </div>
       <label>
