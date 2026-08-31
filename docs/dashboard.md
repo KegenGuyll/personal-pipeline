@@ -18,16 +18,19 @@ except `_template`):
 - **Access** — `private` (Tailscale sidecar) or `public`.
 - **Last deploy** — the most recent deployment's status and time.
 
-## Adding a service
+## Adding a service (manual, advanced)
 
-The "Add service" form creates `services/<name>/docker-compose.yml` from the
-same private (Tailscale) template as `services/_template/`, given a name,
-image, port, and optional Tailscale hostname. This is the same "known project"
-allowlist the webhook enforces, so the service becomes deployable on the next
-`git push` (once its project repo has the `deploy.yml` snippet and `SERVICE_ENV`
-secret — see [adding-a-service.md](adding-a-service.md)).
+The "Add service (manual — no GitHub workflow)" form is collapsed under the
+**Advanced** toggle on the dashboard. It creates `services/<name>/docker-compose.yml`
+from the same private (Tailscale) template as `services/_template/`, given a
+name, image, port, and optional Tailscale hostname. This is the same "known
+project" allowlist the webhook enforces, so the service becomes deployable on
+the next `git push` (once its project repo has the `deploy.yml` snippet and
+`SERVICE_ENV` secret — see [adding-a-service.md](adding-a-service.md)).
 
-The agent deliberately accepts only those fields — never raw compose — and
+Use it for services that don't fit onboarding: third-party/prebuilt images,
+manual webhook deploys, or repos the onboarding GitHub App can't reach. The
+agent deliberately accepts only those fields — never raw compose — and
 validates the image against `ALLOWED_IMAGE_PREFIXES` just like a webhook deploy.
 
 ## Onboarding a project

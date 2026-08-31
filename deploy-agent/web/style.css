@@ -123,6 +123,21 @@ select:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
 .env-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; }
 .env-row button { padding: 6px 10px; }
 
+details.advanced { margin-top: 28px; }
+details.advanced summary {
+  font-size: 1.05rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--text);
+  padding: 8px 0 12px;
+  user-select: none;
+  list-style: none;
+}
+details.advanced summary::-webkit-details-marker { display: none; }
+details.advanced summary::before { content: "▸ "; color: var(--muted); }
+details.advanced[open] summary::before { content: "▾ "; }
+details.advanced[open] summary { padding-bottom: 12px; }
+
 .hint { color: var(--muted); font-size: 0.78rem; margin: 8px 0 0; }
 .error { color: var(--bad); font-size: 0.85rem; margin: 10px 0 0; }
 .empty { color: var(--muted); text-align: center; padding: 14px; }
