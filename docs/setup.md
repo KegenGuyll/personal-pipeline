@@ -162,7 +162,25 @@ gets them automatically):
 | `DEPLOY_WEBHOOK_URL` | `https://deploy.<domain>/hooks/deploy` |
 | `DEPLOY_WEBHOOK_SECRET` | the `WEBHOOK_SECRET` from step 2 |
 
-## 7. Smoke-test the webhook
+## 7. (Optional) Onboarding GitHub App
+
+To onboard new projects from the dashboard without editing each repo by hand
+(creates the compose file, sets `SERVICE_ENV`, and opens a review PR adding
+`deploy.yml`), create a GitHub App and wire it into the agent:
+
+1. GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App**.
+2. Permissions: **Contents: Read and write**, **Secrets: Read and write**,
+   **Pull requests: Read and write** (Metadata read is automatic). Webhook can
+   stay disabled — onboarding is dashboard/API-driven.
+3. Generate a **private key** (download the `.pem`) and note the **App ID**;
+   install the app on your account (All repositories or the ones you'll onboard).
+4. Add to `stack/.env`: `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_B64`
+   (`base64 -i key.pem | tr -d '\n'`), optionally `GITHUB_APP_INSTALLATION_ID`
+   / `PIPELINE_OWNER` / `PIPELINE_REF`. Restart the agent.
+
+Full walkthrough in [onboarding.md](onboarding.md).
+
+## 8. Smoke-test the webhook
 
 From any machine that can reach the agent:
 
@@ -179,7 +197,7 @@ curl -i https://deploy.<domain>/hooks/deploy \
 A `404 unknown project` response means auth + routing work (there is no `demo`
 service yet). A `401 invalid signature` means the secret doesn't match.
 
-## 8. Updating the infra
+## 9. Updating the infra
 
 Infra changes (agent, stack, nginx) are published to GHCR automatically by
 `.github/workflows/deploy-infra.yml`. To apply them on the server:

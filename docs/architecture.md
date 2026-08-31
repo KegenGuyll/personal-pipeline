@@ -47,6 +47,22 @@ A small Go binary running in a container on the server. It:
 It deliberately accepts no compose content over the webhook — only an image
 tag + env for a versioned service.
 
+### 2b. Onboarding GitHub App (optional)
+
+An outbound-only GitHub App client (`deploy-agent/github.go`) powers
+`POST /onboard` (admin-gated, same as `POST /services`). Given
+`owner/repo` + service/image/port/hostname/env, it:
+
+1. writes `services/<name>/docker-compose.yml` (same fixed template),
+2. sets the repo's `SERVICE_ENV` secret (encrypted with the repo's
+   Actions-secrets public key, libsodium sealed box),
+3. opens a **review PR** adding `.github/workflows/deploy.yml`
+   (`pipeline/onboard-<service>` branch; the agent never merges).
+
+No inbound webhook is needed — the agent calls GitHub's REST API with
+installation tokens minted from the app's private key. Missing Dockerfile at
+the configured `context`/`dockerfile` path is a warning, not a block.
+
 ### 3. Server state
 
 - `stack/` — the bootstrap compose for the agent + nginx, and `stack/.env`

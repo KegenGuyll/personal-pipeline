@@ -57,6 +57,60 @@
   </section>
 
   <section>
+    <h2>Onboard project</h2>
+    <form id="onboard-form" class="card form">
+      <div class="grid">
+        <label>
+          Repo
+          <input name="repo" required placeholder="owner/repo">
+        </label>
+        <label>
+          Service
+          <input name="service" placeholder="defaults to the repo name">
+        </label>
+        <label>
+          Image
+          <input name="image" placeholder="ghcr.io/owner/my-service">
+        </label>
+        <label>
+          Port
+          <input name="port" type="number" min="1" max="65535" value="3000">
+        </label>
+        <label>
+          Hostname
+          <input name="hostname" placeholder="defaults to the service name">
+        </label>
+        <label>
+          Dockerfile (relative to context)
+          <input name="dockerfile" value="Dockerfile" placeholder="Dockerfile">
+        </label>
+        <label>
+          Context
+          <input name="context" value="." placeholder=".">
+        </label>
+      </div>
+      <label>
+        Env (JSON, optional — becomes the SERVICE_ENV secret)
+        <textarea name="env" rows="4" placeholder='{"API_KEY":"...","DATABASE_URL":"..."}'></textarea>
+      </label>
+      <div class="row">
+        <label class="check">
+          <input type="checkbox" name="overwrite">
+          Replace an existing deploy.yml
+        </label>
+      </div>
+      <button type="submit">Onboard project</button>
+      <p class="hint">
+        Creates the service compose file on the server, sets the repo's SERVICE_ENV secret, and
+        opens a pull request that adds the deploy workflow. The PR is never auto-merged — review
+        it, then merge. Requires the admin token.
+      </p>
+      <p id="onboard-error" class="error" hidden></p>
+      <div id="onboard-result" class="result" hidden></div>
+    </form>
+  </section>
+
+  <section>
     <h2>Add service</h2>
     <form id="add-form" class="card form">
       <div class="grid">

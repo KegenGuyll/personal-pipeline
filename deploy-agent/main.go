@@ -25,8 +25,18 @@ func main() {
 		locks:    map[string]*sync.Mutex{},
 	}
 
+	// GitHub App client for project onboarding. Configured via GITHUB_APP_ID +
+	// GITHUB_APP_PRIVATE_KEY_B64; nil leaves POST /onboard disabled (404).
+	gh, err := newGithubAppClient(cfg)
+	if err != nil {
+		log.Printf("onboarding disabled: %v", err)
+		gh = nil
+	}
+	d.gh = gh
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /hooks/deploy", d.handleDeploy)
+	mux.HandleFunc("POST /onboard", d.handleOnboard)
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("GET /deployments", d.handleListDeployments)
 	mux.HandleFunc("GET /deployments/{id}", d.handleGetDeployment)

@@ -7,6 +7,8 @@ const $ = (sel) => document.querySelector(sel);
 
 const banner = $("#banner");
 const addError = $("#add-error");
+const onboardError = $("#onboard-error");
+const onboardResult = $("#onboard-result");
 
 function getToken(key) {
   return localStorage.getItem(key) || "";
@@ -32,6 +34,21 @@ function showAddError(msg) {
 function hideAddError() {
   addError.hidden = true;
   addError.textContent = "";
+}
+
+function showOnboardError(msg) {
+  onboardError.textContent = msg;
+  onboardError.hidden = false;
+  onboardResult.hidden = true;
+}
+function hideOnboardError() {
+  onboardError.hidden = true;
+  onboardError.textContent = "";
+}
+
+function showOnboardResult(html) {
+  onboardResult.innerHTML = html;
+  onboardResult.hidden = false;
 }
 
 async function api(path, { method = "GET", token = "", body } = {}) {
@@ -162,6 +179,94 @@ async function submitAdd(e) {
   showAddError(data && data.error ? data.error : "Failed to add service (status " + status + ")");
 }
 
+async function submitOnboard(e) {
+  e.preventDefault();
+  hideOnboardError();
+  hideBanner();
+
+  const adminToken = getToken(LS_ADMIN);
+  if (!adminToken) {
+    showBanner("Enter the admin token in Settings before onboarding a project.");
+    openSettings();
+    return;
+  }
+
+  const form = e.target;
+  let env = {};
+  const envText = form.env.value.trim();
+  if (envText) {
+    try {
+      env = JSON.parse(envText);
+    } catch (_) {
+      showOnboardError('Env must be valid JSON, e.g. {"API_KEY":"..."}.');
+      return;
+    }
+    if (typeof env !== "object" || env === null || Array.isArray(env)) {
+      showOnboardError('Env must be a JSON object, e.g. {"API_KEY":"..."}.');
+      return;
+    }
+  }
+
+  const body = {
+    repo: form.repo.value.trim(),
+    service: form.service.value.trim() || undefined,
+    image: form.image.value.trim() || undefined,
+    port: parseInt(form.port.value, 10) || 0,
+    hostname: form.hostname.value.trim() || undefined,
+    context: form.context.value.trim() || undefined,
+    dockerfile: form.dockerfile.value.trim() || undefined,
+    env,
+    overwrite_workflow: form.overwrite.checked,
+  };
+
+  const { status, data } = await api("/onboard", { method: "POST", token: adminToken, body });
+
+  if (status === 401) {
+    showBanner("Unauthorized — open Settings and enter the correct admin token.");
+    openSettings();
+    return;
+  }
+  if (status === 404) {
+    showBanner("Onboarding is disabled — set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_B64 on the server.");
+    return;
+  }
+  if (status === 201) {
+    form.reset();
+    form.port.value = "3000";
+    form.context.value = ".";
+    form.dockerfile.value = "Dockerfile";
+    form.overwrite.checked = false;
+    renderOnboardResult(data);
+    loadServices();
+    return;
+  }
+  const msg = data && data.error ? data.error : "Onboarding failed (status " + status + ")";
+  if (data && data.results) {
+    const res = data.results;
+    const done = [
+      res.compose ? "compose " + res.compose : null,
+      res.secret ? "secret set" : null,
+    ].filter(Boolean).join(", ");
+    showOnboardError(msg + (done ? " — already done: " + done + ". Re-run to continue." : ""));
+  } else {
+    showOnboardError(msg);
+  }
+}
+
+function renderOnboardResult(r) {
+  const warns = (r.warnings || [])
+    .map((w) => `<li class="warn">${esc(w)}</li>`)
+    .join("");
+  const pr = r.pr
+    ? `<br><a href="${esc(r.pr.url)}" target="_blank" rel="noopener">Pull request #${esc(r.pr.number)}</a> (${esc(r.pr.state)}) — review and merge it to activate deploys.`
+    : "";
+  showOnboardResult(
+    `<span class="title">Onboarded ${esc(r.repo)}</span> as service <strong>${esc(r.service)}</strong> (${esc(r.image)}).` +
+      ` Compose file: ${esc(r.compose)} · SERVICE_ENV secret: set` +
+      (warns ? `<ul>${warns}</ul>` : "") + pr
+  );
+}
+
 // Settings wiring
 $("#settings-toggle").addEventListener("click", () => {
   const s = $("#settings");
@@ -182,5 +287,6 @@ $("#admin-token").value = getToken(LS_ADMIN);
 
 $("#refresh").addEventListener("click", loadServices);
 $("#add-form").addEventListener("submit", submitAdd);
+$("#onboard-form").addEventListener("submit", submitOnboard);
 
 loadServices();
