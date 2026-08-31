@@ -113,6 +113,16 @@ func (d *deployer) onboardingConfigured() bool {
 	return true
 }
 
+// failOnboard logs the step that failed and responds with the partial results,
+// so a mid-onboarding failure is visible in the agent log as well as the body.
+func (d *deployer) failOnboard(w http.ResponseWriter, res *onboardResults, step string, status int, err error) {
+	res.Error = err.Error()
+	logEvent("onboard.failed", map[string]any{
+		"step": step, "repo": res.Repo, "service": res.Service, "error": err.Error(),
+	})
+	writeJSON(w, status, map[string]any{"error": err.Error(), "results": res})
+}
+
 // handleListOnboardRepos returns every repo the onboarding GitHub App can see,
 // for the dashboard's repository dropdown. Read-gated like GET /services.
 func (d *deployer) handleListOnboardRepos(w http.ResponseWriter, r *http.Request) {
@@ -234,8 +244,7 @@ func (d *deployer) handleOnboard(w http.ResponseWriter, r *http.Request) {
 	// 1. Resolve the repo's default branch (also proves the app can see it).
 	baseBranch, err := d.gh.repoInfo(ctx, owner, repo)
 	if err != nil {
-		res.Error = err.Error()
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error(), "results": res})
+		d.failOnboard(w, res, "repo_info", http.StatusBadGateway, err)
 		return
 	}
 	res.BaseBranch = baseBranch
@@ -243,8 +252,7 @@ func (d *deployer) handleOnboard(w http.ResponseWriter, r *http.Request) {
 	// 2. Workflow file must not already exist unless overwriting.
 	exists, err := d.gh.hasFile(ctx, owner, repo, baseBranch, ".github/workflows/deploy.yml")
 	if err != nil {
-		res.Error = err.Error()
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error(), "results": res})
+		d.failOnboard(w, res, "workflow_exists_check", http.StatusBadGateway, err)
 		return
 	}
 	if exists && !req.OverwriteWorkflow {
@@ -267,8 +275,7 @@ func (d *deployer) handleOnboard(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := createServiceOnDisk(d.cfg, spec); err != nil {
-			res.Error = err.Error()
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "results": res})
+			d.failOnboard(w, res, "create_compose", http.StatusInternalServerError, err)
 			return
 		}
 		res.Compose = "created"
@@ -280,8 +287,7 @@ func (d *deployer) handleOnboard(w http.ResponseWriter, r *http.Request) {
 	}
 	hasDockerfile, err := d.gh.hasFile(ctx, owner, repo, baseBranch, dockerfilePath)
 	if err != nil {
-		res.Error = err.Error()
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error(), "results": res})
+		d.failOnboard(w, res, "dockerfile_check", http.StatusBadGateway, err)
 		return
 	}
 	if !hasDockerfile {
@@ -291,13 +297,11 @@ func (d *deployer) handleOnboard(w http.ResponseWriter, r *http.Request) {
 	// 5. SERVICE_ENV secret (repo-level; independent of PR state).
 	envJSON, err := json.Marshal(req.Env)
 	if err != nil {
-		res.Error = err.Error()
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "results": res})
+		d.failOnboard(w, res, "env_serialize", http.StatusInternalServerError, err)
 		return
 	}
 	if err := d.gh.setSecret(ctx, owner, repo, "SERVICE_ENV", string(envJSON)); err != nil {
-		res.Error = err.Error()
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error(), "results": res})
+		d.failOnboard(w, res, "set_secret", http.StatusBadGateway, err)
 		return
 	}
 	res.Secret = "set"
@@ -321,8 +325,7 @@ func (d *deployer) handleOnboard(w http.ResponseWriter, r *http.Request) {
 	}
 	content, err := renderDeployWorkflow(wd)
 	if err != nil {
-		res.Error = err.Error()
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "results": res})
+		d.failOnboard(w, res, "render_workflow", http.StatusInternalServerError, err)
 		return
 	}
 	bodyText := "Onboarding service `" + req.Service + "` into the personal pipeline.\n\n" +
@@ -339,8 +342,7 @@ func (d *deployer) handleOnboard(w http.ResponseWriter, r *http.Request) {
 		Body:       bodyText,
 	})
 	if err != nil {
-		res.Error = err.Error()
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error(), "results": res})
+		d.failOnboard(w, res, "open_pr", http.StatusBadGateway, err)
 		return
 	}
 	res.PR = &onboardPRResult{Number: pr.Number, URL: pr.URL, Branch: pr.Branch, State: "open"}
