@@ -61,6 +61,7 @@ docs/                setup, architecture, adding-a-service, hooks, logs, securit
 - [Hooks & notifications](docs/hooks-and-notifications.md) — pre/post hooks + Discord/Slack/ntfy
 - [Deployment logs](docs/deployment-logs.md) — history API + log schema
 - [Dashboard](docs/dashboard.md) — view services/versions + add services
+- [dsh (DeepSeek Harness)](docs/dsh.md) — self-hosted coding-agent web UI, accessed from phone + computer over Tailscale
 - [Tailscale access](docs/tailscale.md) — private access for personal-data apps
 - [Security](docs/security.md) — threat model
 - [Architecture](docs/architecture.md) — how it fits together
