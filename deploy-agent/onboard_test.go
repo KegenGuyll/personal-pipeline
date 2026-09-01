@@ -272,8 +272,8 @@ func TestHandleListOnboardRepos(t *testing.T) {
 
 func TestHandleOnboardDiagnostics(t *testing.T) {
 	d := newOnboardDeployer(t, &fakeGithub{diag: map[string]any{
-		"id":          float64(987),
-		"permissions": map[string]any{"contents": "write"},
+		"app_installations": []map[string]any{{"id": float64(987), "account": map[string]any{"login": "alice"}}},
+		"installation":      map[string]any{"id": float64(987), "permissions": map[string]any{"contents": "write"}},
 	}})
 	d.cfg.ReadToken = "readtok"
 
@@ -284,13 +284,12 @@ func TestHandleOnboardDiagnostics(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("code = %d, body = %s", w.Code, w.Body.String())
 	}
-	var out struct {
-		Installation map[string]any `json:"installation"`
-	}
+	var out map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	perms := out.Installation["permissions"].(map[string]any)
+	inst := out["installation"].(map[string]any)
+	perms := inst["permissions"].(map[string]any)
 	if perms["contents"] != "write" {
 		t.Fatalf("permissions = %v", perms)
 	}

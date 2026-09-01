@@ -171,7 +171,9 @@ func (c *githubAppClient) tokenForInstallation(ctx context.Context) (string, err
 		return "", fmt.Errorf("mint app jwt: %w", err)
 	}
 	instID := c.installationID
+	resolvedVia := "configured"
 	if instID == 0 {
+		resolvedVia = "auto"
 		instID, err = c.resolveInstallationID(ctx, jwt)
 		if err != nil {
 			return "", err
@@ -185,6 +187,7 @@ func (c *githubAppClient) tokenForInstallation(ctx context.Context) (string, err
 	if _, err := c.doJSON(ctx, http.MethodPost, fmt.Sprintf("/app/installations/%d/access_tokens", instID), jwt, nil, &out); err != nil {
 		return "", fmt.Errorf("mint installation token: %w", err)
 	}
+	logEvent("onboard.install", map[string]any{"install_id": instID, "resolved": resolvedVia})
 	c.token = out.Token
 	if t, err := time.Parse(time.RFC3339, out.ExpiresAt); err == nil {
 		c.expiresAt = t
@@ -192,14 +195,29 @@ func (c *githubAppClient) tokenForInstallation(ctx context.Context) (string, err
 	return c.token, nil
 }
 
-func (c *githubAppClient) resolveInstallationID(ctx context.Context, jwt string) (int64, error) {
-	var insts []struct {
-		ID      int64 `json:"id"`
-		Account struct {
-			Login string `json:"login"`
-		} `json:"account"`
-	}
+// appInstallation is the minimal shape of an app installation from
+// GET /app/installations (authenticated with the app JWT).
+type appInstallation struct {
+	ID                  int64  `json:"id"`
+	RepositorySelection string `json:"repository_selection"`
+	Account             struct {
+		Login string `json:"login"`
+	} `json:"account"`
+}
+
+// listInstallations lists the app's installations using the app JWT (works
+// even when an installation token is stale/orphaned).
+func (c *githubAppClient) listInstallations(ctx context.Context, jwt string) ([]appInstallation, error) {
+	var insts []appInstallation
 	if _, err := c.doJSON(ctx, http.MethodGet, "/app/installations", jwt, nil, &insts); err != nil {
+		return nil, err
+	}
+	return insts, nil
+}
+
+func (c *githubAppClient) resolveInstallationID(ctx context.Context, jwt string) (int64, error) {
+	insts, err := c.listInstallations(ctx, jwt)
+	if err != nil {
 		return 0, err
 	}
 	if len(insts) == 0 {
@@ -281,18 +299,32 @@ func (c *githubAppClient) listRepos(ctx context.Context) ([]githubRepo, error) {
 	return repos, nil
 }
 
-// diagnostics reports what GitHub actually granted this installation, so 403s
-// like "Resource not accessible by integration" can be checked against the
-// real permission set instead of guessed at. GET /installation is called with
-// the installation token itself and returns its live permissions.
+// diagnostics assembles a complete picture of the app's install state without
+// failing on the first error: the app's installations (via JWT) plus the
+// installation the token resolves to (via GET /installation, which 404s when
+// the token's install was removed). Errors are embedded in the map, never
+// swallowed silently.
 func (c *githubAppClient) diagnostics(ctx context.Context) (map[string]any, error) {
-	tok, err := c.tokenForInstallation(ctx)
+	out := map[string]any{}
+
+	jwt, err := c.appJWT(time.Now())
 	if err != nil {
-		return nil, err
+		out["jwt_error"] = err.Error()
+	} else if insts, err := c.listInstallations(ctx, jwt); err != nil {
+		out["installations_error"] = err.Error()
+	} else {
+		out["app_installations"] = insts
 	}
-	var out map[string]any
-	if _, err := c.doJSON(ctx, http.MethodGet, "/installation", tok, nil, &out); err != nil {
-		return nil, fmt.Errorf("fetch installation info: %w", err)
+
+	if tok, err := c.tokenForInstallation(ctx); err != nil {
+		out["token_error"] = err.Error()
+	} else {
+		var info map[string]any
+		if _, err := c.doJSON(ctx, http.MethodGet, "/installation", tok, nil, &info); err != nil {
+			out["installation_error"] = err.Error()
+		} else {
+			out["installation"] = info
+		}
 	}
 	return out, nil
 }
