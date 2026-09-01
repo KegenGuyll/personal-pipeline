@@ -291,3 +291,15 @@ func TestHandleDeployRejectsBadSignature(t *testing.T) {
 		t.Fatalf("code = %d, want 401", w.Code)
 	}
 }
+
+func TestLogRequestsPassesThrough(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusBadGateway)
+	})
+	req := httptest.NewRequest("POST", "/x", nil)
+	w := httptest.NewRecorder()
+	logRequests(inner).ServeHTTP(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("code = %d, want 502", w.Code)
+	}
+}

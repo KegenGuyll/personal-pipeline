@@ -337,7 +337,11 @@ func (c *githubAppClient) openWorkflowPR(ctx context.Context, owner, repo string
 	created := false
 	for i := 0; i < 10; i++ {
 		body := map[string]string{"ref": "refs/heads/" + branch, "sha": ref.Object.SHA}
-		if _, err := c.doJSON(ctx, http.MethodPost, "/repos/"+owner+"/"+repo+"/git/refs", tok, body, nil); err == nil {
+		// Declare err with := so the same value is visible to the checks below;
+		// an if-initializer scoped err would be nil here and swallow the real
+		// GitHub error (and break the 422 collision retry).
+		_, err := c.doJSON(ctx, http.MethodPost, "/repos/"+owner+"/"+repo+"/git/refs", tok, body, nil)
+		if err == nil {
 			created = true
 			break
 		}
@@ -435,12 +439,20 @@ func (c *githubAppClient) doJSON(ctx context.Context, method, path, token string
 
 	resp, err := c.http.Do(req)
 	if err != nil {
+		logEvent("github.api_error", map[string]any{
+			"method": method, "path": path, "status": 0, "error": err.Error(),
+		})
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		msg := readLimited(resp.Body, 512)
+		// Surface every GitHub API failure in the agent log, not just in the
+		// response body (which Cloudflare's 502 page hides).
+		logEvent("github.api_error", map[string]any{
+			"method": method, "path": path, "status": resp.StatusCode, "message": msg,
+		})
 		return resp, &githubAPIError{Status: resp.StatusCode, Message: msg, Path: path}
 	}
 	if out != nil {
