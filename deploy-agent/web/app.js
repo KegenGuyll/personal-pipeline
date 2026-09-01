@@ -106,15 +106,49 @@ function render(services) {
       last = `${statusBadge(ld.status)} <span class="muted">${esc(formatTime(ld.ts))}</span>`;
     }
 
+    const del = getToken(LS_ADMIN)
+      ? `<button type="button" class="ghost danger" data-delete="${esc(svc.name)}" title="Stop and remove this service (server-side)">Delete</button>`
+      : "";
+
     tr.innerHTML = `
       <td><strong>${esc(svc.name)}</strong></td>
       <td>${version}</td>
       <td class="mono muted">${esc(svc.image || "—")}</td>
       <td>${access}</td>
-      <td>${last}</td>`;
+      <td>${last}</td>
+      <td>${del}</td>`;
     body.appendChild(tr);
   }
 }
+
+async function deleteService(name) {
+  if (!confirm(`Delete service "${name}"?\n\nStops and removes its containers (docker compose down) and deletes services/${name}/ on the server. Volumes are kept. This is server-side only — the repo's workflow is untouched.`)) {
+    return;
+  }
+  const adminToken = getToken(LS_ADMIN);
+  const { status, data } = await api("/services/" + encodeURIComponent(name), {
+    method: "DELETE", token: adminToken,
+  });
+  if (status === 200) {
+    const warn = data && data.warnings && data.warnings.length
+      ? " (warning: " + data.warnings.join("; ") + ")"
+      : "";
+    showBanner("Deleted " + name + "." + warn);
+    await loadServices();
+    return;
+  }
+  if (status === 401) {
+    showBanner("Unauthorized — open Settings and enter the correct admin token.");
+    openSettings();
+    return;
+  }
+  showBanner("Delete failed (" + status + "): " + (data && data.error ? data.error : ""));
+}
+
+$("#services-body").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-delete]");
+  if (btn) deleteService(btn.dataset.delete);
+});
 
 async function loadServices() {
   hideBanner();
@@ -235,6 +269,7 @@ async function submitOnboard(e) {
     if (el("dockerfile")) el("dockerfile").value = "Dockerfile";
     if (el("overwrite")) el("overwrite").checked = false;
     $("#image-hint").textContent = "";
+    $("#compose-hint").textContent = "";
     populateEnv([]);
     renderOnboardResult(data);
     loadServices();
@@ -476,9 +511,35 @@ function populateEnv(keys) {
 async function loadEnvKeys(fullName) {
   if (!fullName) return;
   const token = getToken(LS_READ) || getToken(LS_ADMIN);
-  const { status, data } = await api("/onboard/env-keys?repo=" + encodeURIComponent(fullName), { token });
+  const form = $("#onboard-form");
+  const service = form.elements.namedItem("service") ? form.elements.namedItem("service").value.trim() : "";
+  const { status, data } = await api(
+    "/onboard/env-keys?repo=" + encodeURIComponent(fullName) + (service ? "&service=" + encodeURIComponent(service) : ""),
+    { token }
+  );
   if (status !== 200) return;
   populateEnv(data.keys || []);
+  setComposeHint(data);
+}
+
+// setComposeHint tells the user whether the current service name maps to an
+// existing (custom) compose or will get the standard template — making a name
+// mismatch like "dsh-server" vs the committed "dsh" visible before submit.
+function setComposeHint(data) {
+  const hint = $("#compose-hint");
+  if (!hint) return;
+  if (data.compose === "existing") {
+    hint.textContent = "✓ Custom compose exists for this name — it will be used as-is.";
+    hint.className = "hint ok-hint";
+  } else if (data.compose === "missing") {
+    const existing = (data.existing_services || []).filter((s) => s && s !== "_template");
+    hint.textContent = "⚠ No compose for this name — the standard template will be generated." +
+      (existing.length ? " Existing services: " + existing.join(", ") : "");
+    hint.className = "hint warn-hint";
+  } else {
+    hint.textContent = "";
+    hint.className = "hint";
+  }
 }
 
 function buildEnv() {
@@ -515,6 +576,19 @@ $("#add-form").addEventListener("submit", submitAdd);
 $("#onboard-form").addEventListener("submit", submitOnboard);
 $("#repo-refresh").addEventListener("click", loadRepos);
 $("#env-add").addEventListener("click", () => addEnvRow());
+
+// Changing the service name re-checks whether a custom compose exists for it.
+const serviceField = $("#onboard-form").elements.namedItem("service");
+if (serviceField) {
+  let serviceDebounce = null;
+  serviceField.addEventListener("input", () => {
+    clearTimeout(serviceDebounce);
+    serviceDebounce = setTimeout(() => {
+      const repo = $("#repo").value.trim();
+      if (repo) loadEnvKeys(repo);
+    }, 400);
+  });
+}
 
 loadServices();
 loadRepos();

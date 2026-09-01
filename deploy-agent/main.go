@@ -51,6 +51,7 @@ func main() {
 	mux.HandleFunc("GET /deployments/{id}", d.handleGetDeployment)
 	mux.HandleFunc("GET /services", d.handleListServices)
 	mux.HandleFunc("POST /services", d.handleCreateService)
+	mux.HandleFunc("DELETE /services/{name}", d.handleDeleteService)
 	mux.Handle("GET /ui/", http.StripPrefix("/ui/", webHandler()))
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/ui/", http.StatusFound)

@@ -97,7 +97,8 @@ func newOnboardDeployer(t *testing.T, gh githubClient) *deployer {
 			PipelineRef:          "main",
 			TailscaleAuthKey:     "tskey-test",
 		},
-		gh: gh,
+		hist: newHistory(filepath.Join(t.TempDir(), "deployments.jsonl"), 10),
+		gh:   gh,
 	}
 }
 
@@ -563,7 +564,9 @@ func TestHandleOnboardEnvKeys(t *testing.T) {
 	d := newOnboardDeployer(t, &fakeGithub{envKeys: []string{"API_KEY", "DATABASE_URL"}})
 	d.cfg.ReadToken = "readtok"
 
-	req := httptest.NewRequest("GET", "/onboard/env-keys?repo=alice/web", nil)
+	// With a service name that has no compose dir -> compose "missing" and the
+	// existing-services list is reported (the dsh-server vs dsh case).
+	req := httptest.NewRequest("GET", "/onboard/env-keys?repo=alice/web&service=web", nil)
 	req.Header.Set("Authorization", "Bearer readtok")
 	w := httptest.NewRecorder()
 	d.handleListOnboardEnvKeys(w, req)
@@ -571,13 +574,39 @@ func TestHandleOnboardEnvKeys(t *testing.T) {
 		t.Fatalf("code = %d, body = %s", w.Code, w.Body.String())
 	}
 	var out struct {
-		Keys []string `json:"keys"`
+		Keys             []string `json:"keys"`
+		Compose          string   `json:"compose"`
+		ExistingServices []string `json:"existing_services"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
 	if len(out.Keys) != 2 || out.Keys[0] != "API_KEY" {
 		t.Fatalf("keys = %v", out.Keys)
+	}
+	if out.Compose != "missing" {
+		t.Fatalf("compose = %q, want missing", out.Compose)
+	}
+	if out.ExistingServices == nil {
+		t.Fatalf("existing_services missing")
+	}
+
+	// Once a compose dir exists for the name -> compose "existing".
+	if err := createServiceOnDisk(d.cfg, &ServiceSpec{Name: "web", Image: "ghcr.io/alice/web", Port: 3000, Hostname: "web"}); err != nil {
+		t.Fatal(err)
+	}
+	req4 := httptest.NewRequest("GET", "/onboard/env-keys?repo=alice/web&service=web", nil)
+	req4.Header.Set("Authorization", "Bearer readtok")
+	w4 := httptest.NewRecorder()
+	d.handleListOnboardEnvKeys(w4, req4)
+	var out4 struct {
+		Compose string `json:"compose"`
+	}
+	if err := json.Unmarshal(w4.Body.Bytes(), &out4); err != nil {
+		t.Fatal(err)
+	}
+	if out4.Compose != "existing" {
+		t.Fatalf("compose = %q, want existing", out4.Compose)
 	}
 
 	// Bad repo -> 400.
@@ -619,5 +648,56 @@ INVALID KEY=x
 		if keys[i] != want[i] {
 			t.Fatalf("keys = %v, want %v", keys, want)
 		}
+	}
+}
+
+func TestHandleDeleteService(t *testing.T) {
+	d := newOnboardDeployer(t, &fakeGithub{defaultBranch: "main"})
+	d.cfg.AdminToken = "admintok"
+	if err := createServiceOnDisk(d.cfg, &ServiceSpec{Name: "web", Image: "ghcr.io/alice/web", Port: 3000, Hostname: "web"}); err != nil {
+		t.Fatal(err)
+	}
+
+	del := func(name, method string) (*httptest.ResponseRecorder, map[string]any) {
+		req := httptest.NewRequest(method, "/services/"+name, nil)
+		req.Header.Set("Authorization", "Bearer admintok")
+		req.SetPathValue("name", name)
+		w := httptest.NewRecorder()
+		d.handleDeleteService(w, req)
+		var out map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &out)
+		return w, out
+	}
+
+	// Unauthorized without the admin token.
+	req := httptest.NewRequest("DELETE", "/services/web", nil)
+	req.SetPathValue("name", "web")
+	w := httptest.NewRecorder()
+	d.handleDeleteService(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("code = %d, want 401", w.Code)
+	}
+
+	// Invalid name -> 400.
+	if w, _ := del("Bad_Name", "DELETE"); w.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, want 400", w.Code)
+	}
+
+	// Unknown service -> 404.
+	if w, _ := del("nope", "DELETE"); w.Code != http.StatusNotFound {
+		t.Fatalf("code = %d, want 404", w.Code)
+	}
+
+	// Success: dir removed (compose down may fail without a daemon — that's a
+	// warning, not an error).
+	w, out := del("web", "DELETE")
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, body = %s", w.Code, w.Body.String())
+	}
+	if out["deleted"] != "web" {
+		t.Fatalf("deleted = %v", out["deleted"])
+	}
+	if _, err := os.Stat(filepath.Join(d.cfg.ServicesDir, "web")); err == nil {
+		t.Fatal("service dir still exists")
 	}
 }

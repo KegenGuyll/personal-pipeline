@@ -58,7 +58,7 @@ first build will fail until one is added). Requires `GITHUB_APP_ID` +
 | Scope | Endpoints | Token |
 |---|---|---|
 | Read | `GET /services`, `GET /deployments`, `GET /deployments/{id}`, `GET /onboard/repos` | `READ_TOKEN` |
-| Write | `POST /services`, `POST /onboard` | `ADMIN_TOKEN` |
+| Write | `POST /services`, `DELETE /services/{name}`, `POST /onboard` | `ADMIN_TOKEN` |
 
 - Both tokens are sent as `Authorization: Bearer <token>` and stored by the
   dashboard in your browser's `localStorage` (entered once via **Settings**).
@@ -91,6 +91,11 @@ curl -X POST https://deploy.<domain>/services \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name":"my-service","image":"ghcr.io/you/my-service","port":3000,"hostname":"my-service"}'
+
+# delete a service (admin) — stops/removes containers, deletes services/<name>/
+# on the server; volumes are kept unless ?purge=true (adds `-v` to compose down)
+curl -X DELETE https://deploy.<domain>/services/my-service \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 
 # onboard a project repo (admin; requires the onboarding GitHub App)
 curl -X POST https://deploy.<domain>/onboard \
