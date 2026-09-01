@@ -650,3 +650,54 @@ INVALID KEY=x
 		}
 	}
 }
+
+func TestHandleDeleteService(t *testing.T) {
+	d := newOnboardDeployer(t, &fakeGithub{defaultBranch: "main"})
+	d.cfg.AdminToken = "admintok"
+	if err := createServiceOnDisk(d.cfg, &ServiceSpec{Name: "web", Image: "ghcr.io/alice/web", Port: 3000, Hostname: "web"}); err != nil {
+		t.Fatal(err)
+	}
+
+	del := func(name, method string) (*httptest.ResponseRecorder, map[string]any) {
+		req := httptest.NewRequest(method, "/services/"+name, nil)
+		req.Header.Set("Authorization", "Bearer admintok")
+		req.SetPathValue("name", name)
+		w := httptest.NewRecorder()
+		d.handleDeleteService(w, req)
+		var out map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &out)
+		return w, out
+	}
+
+	// Unauthorized without the admin token.
+	req := httptest.NewRequest("DELETE", "/services/web", nil)
+	req.SetPathValue("name", "web")
+	w := httptest.NewRecorder()
+	d.handleDeleteService(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("code = %d, want 401", w.Code)
+	}
+
+	// Invalid name -> 400.
+	if w, _ := del("Bad_Name", "DELETE"); w.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, want 400", w.Code)
+	}
+
+	// Unknown service -> 404.
+	if w, _ := del("nope", "DELETE"); w.Code != http.StatusNotFound {
+		t.Fatalf("code = %d, want 404", w.Code)
+	}
+
+	// Success: dir removed (compose down may fail without a daemon — that's a
+	// warning, not an error).
+	w, out := del("web", "DELETE")
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, body = %s", w.Code, w.Body.String())
+	}
+	if out["deleted"] != "web" {
+		t.Fatalf("deleted = %v", out["deleted"])
+	}
+	if _, err := os.Stat(filepath.Join(d.cfg.ServicesDir, "web")); err == nil {
+		t.Fatal("service dir still exists")
+	}
+}

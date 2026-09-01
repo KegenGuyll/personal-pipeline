@@ -106,15 +106,49 @@ function render(services) {
       last = `${statusBadge(ld.status)} <span class="muted">${esc(formatTime(ld.ts))}</span>`;
     }
 
+    const del = getToken(LS_ADMIN)
+      ? `<button type="button" class="ghost danger" data-delete="${esc(svc.name)}" title="Stop and remove this service (server-side)">Delete</button>`
+      : "";
+
     tr.innerHTML = `
       <td><strong>${esc(svc.name)}</strong></td>
       <td>${version}</td>
       <td class="mono muted">${esc(svc.image || "—")}</td>
       <td>${access}</td>
-      <td>${last}</td>`;
+      <td>${last}</td>
+      <td>${del}</td>`;
     body.appendChild(tr);
   }
 }
+
+async function deleteService(name) {
+  if (!confirm(`Delete service "${name}"?\n\nStops and removes its containers (docker compose down) and deletes services/${name}/ on the server. Volumes are kept. This is server-side only — the repo's workflow is untouched.`)) {
+    return;
+  }
+  const adminToken = getToken(LS_ADMIN);
+  const { status, data } = await api("/services/" + encodeURIComponent(name), {
+    method: "DELETE", token: adminToken,
+  });
+  if (status === 200) {
+    const warn = data && data.warnings && data.warnings.length
+      ? " (warning: " + data.warnings.join("; ") + ")"
+      : "";
+    showBanner("Deleted " + name + "." + warn);
+    await loadServices();
+    return;
+  }
+  if (status === 401) {
+    showBanner("Unauthorized — open Settings and enter the correct admin token.");
+    openSettings();
+    return;
+  }
+  showBanner("Delete failed (" + status + "): " + (data && data.error ? data.error : ""));
+}
+
+$("#services-body").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-delete]");
+  if (btn) deleteService(btn.dataset.delete);
+});
 
 async function loadServices() {
   hideBanner();

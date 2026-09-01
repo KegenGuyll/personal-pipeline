@@ -58,6 +58,8 @@ button.ghost {
   color: var(--text);
 }
 button:hover { filter: brightness(1.1); }
+button.danger { color: var(--bad); border-color: rgba(239, 107, 107, 0.4); }
+button.danger:hover { background: rgba(239, 107, 107, 0.12); }
 
 table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); }
