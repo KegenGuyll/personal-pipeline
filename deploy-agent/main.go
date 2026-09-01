@@ -44,6 +44,7 @@ func main() {
 	mux.HandleFunc("POST /hooks/deploy", d.handleDeploy)
 	mux.HandleFunc("POST /onboard", d.handleOnboard)
 	mux.HandleFunc("GET /onboard/repos", d.handleListOnboardRepos)
+	mux.HandleFunc("GET /onboard/env-keys", d.handleListOnboardEnvKeys)
 	mux.HandleFunc("GET /onboard/diagnostics", d.handleOnboardDiagnostics)
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("GET /deployments", d.handleListDeployments)

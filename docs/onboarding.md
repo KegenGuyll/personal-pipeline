@@ -104,7 +104,7 @@ From the dashboard (`https://deploy.<domain>/ui`), **Onboard project**:
 | Hostname | Tailscale MagicDNS hostname | service name |
 | Context | build context for the workflow | `.` |
 | Dockerfile | Dockerfile path relative to context | `Dockerfile` |
-| Env | key-value rows → serialized to JSON as the `SERVICE_ENV` secret | `{}` |
+| Env | key-value rows → serialized to JSON as the `SERVICE_ENV` secret. **Auto-filled from the repo's env-example file** (`.env.example`, `.example.env`, …) when one exists — values are left blank for you to fill. `TS_AUTHKEY` always gets a row: leave it blank to use the server's shared key (`TS_AUTHKEY` in `stack/.env`), or type a per-service key. | `{}` |
 | Replace existing deploy.yml | allow updating an existing workflow | off |
 
 Or via API:

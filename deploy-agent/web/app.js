@@ -235,8 +235,7 @@ async function submitOnboard(e) {
     if (el("dockerfile")) el("dockerfile").value = "Dockerfile";
     if (el("overwrite")) el("overwrite").checked = false;
     $("#image-hint").textContent = "";
-    $("#env-rows").innerHTML = "";
-    addEnvRow();
+    populateEnv([]);
     renderOnboardResult(data);
     loadServices();
     loadRepos();
@@ -263,7 +262,8 @@ function renderOnboardResult(r) {
     ? `<br><a href="${esc(r.pr.url)}" target="_blank" rel="noopener">Pull request #${esc(r.pr.number)}</a> (${esc(r.pr.state)}) — review and merge it to activate deploys.`
     : "";
   const secrets = "SERVICE_ENV secret: set" +
-    (r.webhook_secrets ? " · webhook secrets: set" : "");
+    (r.webhook_secrets ? " · webhook secrets: set" : "") +
+    (r.ts_authkey ? " · TS_AUTHKEY: " + esc(r.ts_authkey) : "");
   showOnboardResult(
     `<span class="title">Onboarded ${esc(r.repo)}</span> as service <strong>${esc(r.service)}</strong> (${esc(r.image)}).` +
       ` Compose file: ${esc(r.compose)} · ${secrets}` +
@@ -347,6 +347,7 @@ function selectRepo(fullName) {
   const input = $("#repo");
   input.value = fullName;
   setRepoDefaults(fullName);
+  loadEnvKeys(fullName);
   closeRepoList();
 }
 
@@ -379,11 +380,16 @@ const repoInput = $("#repo");
 const repoList = $("#repo-list");
 
 repoInput.addEventListener("focus", openRepoList);
+let repoDebounce = null;
 repoInput.addEventListener("input", () => {
   openRepoList();
   // Prefill as soon as the value looks like owner/repo (also covers typing).
   const v = repoInput.value.trim();
-  if (/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(v)) setRepoDefaults(v);
+  if (/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(v)) {
+    setRepoDefaults(v);
+    clearTimeout(repoDebounce);
+    repoDebounce = setTimeout(() => loadEnvKeys(v), 400);
+  }
 });
 repoInput.addEventListener("keydown", (e) => {
   const items = [...repoList.querySelectorAll("li:not(.muted)")];
@@ -431,7 +437,7 @@ document.addEventListener("click", (e) => {
 
 // ---- onboarding: env key-value rows ----
 
-function addEnvRow(key, value) {
+function addEnvRow(key, value, valuePlaceholder) {
   const row = document.createElement("div");
   row.className = "env-row";
   const k = document.createElement("input");
@@ -441,7 +447,7 @@ function addEnvRow(key, value) {
   k.autocomplete = "off";
   const v = document.createElement("input");
   v.name = "env_value";
-  v.placeholder = "value";
+  v.placeholder = valuePlaceholder || "value";
   v.value = value || "";
   v.autocomplete = "off";
   const rm = document.createElement("button");
@@ -452,6 +458,27 @@ function addEnvRow(key, value) {
   rm.addEventListener("click", () => row.remove());
   row.append(k, v, rm);
   $("#env-rows").appendChild(row);
+}
+
+// populateEnv rebuilds the env rows from the repo's env-example keys. Values
+// are left blank (sample values are placeholders). TS_AUTHKEY always gets a
+// row: blank means "use the server's shared key" (the agent injects it).
+function populateEnv(keys) {
+  const list = keys || [];
+  $("#env-rows").innerHTML = "";
+  if (!list.includes("TS_AUTHKEY")) addEnvRow("TS_AUTHKEY", "", "blank = server's shared key");
+  for (const k of list) {
+    if (k !== "TS_AUTHKEY") addEnvRow(k, "");
+  }
+}
+
+// loadEnvKeys fetches the repo's env-example keys and pre-fills the env form.
+async function loadEnvKeys(fullName) {
+  if (!fullName) return;
+  const token = getToken(LS_READ) || getToken(LS_ADMIN);
+  const { status, data } = await api("/onboard/env-keys?repo=" + encodeURIComponent(fullName), { token });
+  if (status !== 200) return;
+  populateEnv(data.keys || []);
 }
 
 function buildEnv() {
@@ -491,4 +518,4 @@ $("#env-add").addEventListener("click", () => addEnvRow());
 
 loadServices();
 loadRepos();
-addEnvRow();
+populateEnv([]);

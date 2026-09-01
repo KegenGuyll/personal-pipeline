@@ -46,6 +46,7 @@ type onboardResults struct {
 	BaseBranch     string           `json:"base_branch"`
 	Secret         string           `json:"secret,omitempty"`          // "set" once the SERVICE_ENV secret exists
 	WebhookSecrets string           `json:"webhook_secrets,omitempty"` // "set" once DEPLOY_WEBHOOK_URL/SECRET exist
+	TSAuthKey      string           `json:"ts_authkey,omitempty"`      // "injected" | "provided"
 	Compose        string           `json:"compose"`                   // "created" | "existing"
 	Warnings       []string         `json:"warnings,omitempty"`
 	PR             *onboardPRResult `json:"pr,omitempty"`
@@ -171,6 +172,36 @@ func (d *deployer) handleOnboardDiagnostics(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, info)
 }
 
+// handleListOnboardEnvKeys returns the variable names from the repo's
+// env-example file (.env.example, .example.env, ...) on the default branch,
+// so the dashboard can pre-fill the env form. Read-gated.
+func (d *deployer) handleListOnboardEnvKeys(w http.ResponseWriter, r *http.Request) {
+	if !d.authorizeRead(w, r) {
+		return
+	}
+	if !d.onboardingConfigured() {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": "onboarding disabled — set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_B64 on the server",
+		})
+		return
+	}
+	owner, repo, err := splitRepo(r.URL.Query().Get("repo"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	keys, err := d.gh.sampleEnvKeys(r.Context(), owner, repo)
+	if err != nil {
+		logEvent("onboard.env_keys_error", map[string]any{"repo": owner + "/" + repo, "error": err.Error()})
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	if keys == nil {
+		keys = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"keys": keys})
+}
+
 func (d *deployer) handleOnboard(w http.ResponseWriter, r *http.Request) {
 	if !d.authorizeWrite(w, r) {
 		return
@@ -262,6 +293,21 @@ func (d *deployer) handleOnboard(w http.ResponseWriter, r *http.Request) {
 		Service:  req.Service,
 		Image:    req.Image,
 		Warnings: []string{},
+	}
+
+	// Every service's Tailscale sidecar requires TS_AUTHKEY: use the caller's
+	// value if provided, else the server's shared key, else reject.
+	if v, ok := req.Env["TS_AUTHKEY"]; !ok || v == "" {
+		if d.cfg.TailscaleAuthKey == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": "TS_AUTHKEY is required — set TS_AUTHKEY in the server's stack/.env, or add it to the env",
+			})
+			return
+		}
+		req.Env["TS_AUTHKEY"] = d.cfg.TailscaleAuthKey
+		res.TSAuthKey = "injected"
+	} else {
+		res.TSAuthKey = "provided"
 	}
 
 	// 1. Resolve the repo's default branch (also proves the app can see it).
