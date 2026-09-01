@@ -38,9 +38,10 @@ validates the image against `ALLOWED_IMAGE_PREFIXES` just like a webhook deploy.
 The "Onboard project" form (above "Add service") does the whole per-repo wiring
 in one action, using a GitHub App (see [onboarding.md](onboarding.md)):
 
-- lists every repository the app can see in a dropdown (`GET /onboard/repos`),
-  auto-filling the service name, Tailscale hostname, and default image
-  (`ghcr.io/<owner>/<service>`) when one is picked (or type a repo manually),
+- lists every repository the app can see in a **searchable picker**
+  (`GET /onboard/repos`) — type to filter, click or arrow-keys + Enter to pick,
+  or type any `owner/repo` manually; selecting auto-fills the service name,
+  Tailscale hostname, and default image (`ghcr.io/<owner>/<service>`),
 - creates `services/<name>/docker-compose.yml` on the server (same template),
 - sets the project repo's `SERVICE_ENV` secret (from the key-value Env rows —
   empty keys are skipped, and the rows are serialized to JSON for you),

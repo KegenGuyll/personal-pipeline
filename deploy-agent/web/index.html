@@ -63,12 +63,12 @@
         <label>
           Repo
           <div class="repo-row">
-            <select id="repo" name="repo">
-              <option value="">Loading repositories…</option>
-            </select>
+            <div class="repo-combobox">
+              <input id="repo" name="repo" placeholder="Search or type owner/repo…" autocomplete="off" spellcheck="false">
+              <ul id="repo-list" class="repo-list" hidden></ul>
+            </div>
             <button type="button" id="repo-refresh" class="ghost" title="Refresh repository list">↻</button>
           </div>
-          <input id="repo-custom" name="repo-custom" placeholder="owner/repo" hidden>
         </label>
         <label>
           Service

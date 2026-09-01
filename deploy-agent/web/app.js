@@ -194,18 +194,15 @@ async function submitOnboard(e) {
   }
 
   const form = e.target;
-  const repoSelect = $("#repo");
-  const repo = repoSelect.value === "__custom__"
-    ? $("#repo-custom").value.trim()
-    : repoSelect.value;
-  if (!repo) {
-    showOnboardError("Pick a repository (or choose 'Type a repository manually…').");
-    return;
-  }
-
   // Canonical form-control access (see submitAdd).
   const el = (name) => form.elements.namedItem(name);
   const val = (name) => (el(name) ? el(name).value.trim() : "");
+
+  const repo = val("repo");
+  if (!repo) {
+    showOnboardError("Pick or type a repository (owner/repo).");
+    return;
+  }
 
   const body = {
     repo,
@@ -237,7 +234,6 @@ async function submitOnboard(e) {
     if (el("context")) el("context").value = ".";
     if (el("dockerfile")) el("dockerfile").value = "Dockerfile";
     if (el("overwrite")) el("overwrite").checked = false;
-    $("#repo-custom").hidden = true;
     $("#image-hint").textContent = "";
     $("#env-rows").innerHTML = "";
     addEnvRow();
@@ -311,48 +307,125 @@ function setRepoDefaults(fullName) {
   if (hint) hint.textContent = "Default image the workflow will build: " + image;
 }
 
+// ---- onboarding: searchable repository combobox ----
+
+let repoRepos = []; // cached [{full_name}] from GET /onboard/repos
+let repoActive = -1; // active row index in the visible list
+
+function renderRepoList() {
+  const input = $("#repo");
+  const list = $("#repo-list");
+  const q = input.value.trim().toLowerCase();
+  const matches = q
+    ? repoRepos.filter((r) => r.full_name.toLowerCase().includes(q)).slice(0, 100)
+    : repoRepos.slice(0, 30);
+  if (!matches.length) {
+    repoActive = -1;
+    list.innerHTML = `<li class="muted">${q ? "No matching repositories" : "No repositories loaded — type owner/repo manually"}</li>`;
+  } else {
+    repoActive = 0; // top match highlighted by default: type + Enter just works
+    list.innerHTML = matches
+      .map((r, i) => `<li data-index="${i}" data-full="${esc(r.full_name)}">${esc(r.full_name)}</li>`)
+      .join("");
+    list.querySelectorAll("li:not(.muted)")[0].classList.add("active");
+  }
+  list.hidden = false;
+}
+
+function openRepoList() { renderRepoList(); }
+function closeRepoList() { $("#repo-list").hidden = true; }
+
+function setRepoActive(items) {
+  items.forEach((li, i) => li.classList.toggle("active", i === repoActive));
+  const active = items[repoActive];
+  if (active) active.scrollIntoView({ block: "nearest" });
+}
+
+function selectRepo(fullName) {
+  const input = $("#repo");
+  input.value = fullName;
+  setRepoDefaults(fullName);
+  closeRepoList();
+}
+
 async function loadRepos() {
-  const select = $("#repo");
-  select.innerHTML = '<option value="">Loading repositories…</option>';
+  const input = $("#repo");
+  repoRepos = [];
   const token = getToken(LS_READ) || getToken(LS_ADMIN);
   const { status, data } = await api("/onboard/repos", { token });
 
   if (status === 404) {
-    select.innerHTML = '<option value="">Onboarding disabled (set GITHUB_APP_ID on the server)</option>';
-    select.disabled = true;
+    input.placeholder = "Onboarding disabled — type owner/repo manually";
+    closeRepoList();
     return;
   }
   if (status === 401) {
-    select.innerHTML = '<option value="">Enter a token in Settings to load repositories</option>';
-    select.disabled = true;
+    input.placeholder = "Enter a token in Settings to load repositories";
+    closeRepoList();
     return;
   }
   if (status !== 200) {
-    select.innerHTML = '<option value="">Failed to load repositories</option>';
-    select.disabled = true;
+    input.placeholder = "Failed to load repositories — type owner/repo manually";
+    closeRepoList();
     return;
   }
-
-  const repos = (data.repos || [])
-    .map((r) => `<option value="${esc(r.full_name)}">${esc(r.full_name)}</option>`)
-    .join("");
-  select.innerHTML =
-    '<option value="">Select a repository…</option>' +
-    repos +
-    '<option value="__custom__">Type a repository manually…</option>';
-  select.disabled = false;
+  repoRepos = data.repos || [];
+  input.placeholder = "Search or type owner/repo…";
 }
 
-function onRepoChange() {
-  const custom = $("#repo-custom");
-  if ($("#repo").value === "__custom__") {
-    custom.hidden = false;
-    custom.focus();
-    return;
+const repoInput = $("#repo");
+const repoList = $("#repo-list");
+
+repoInput.addEventListener("focus", openRepoList);
+repoInput.addEventListener("input", () => {
+  openRepoList();
+  // Prefill as soon as the value looks like owner/repo (also covers typing).
+  const v = repoInput.value.trim();
+  if (/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(v)) setRepoDefaults(v);
+});
+repoInput.addEventListener("keydown", (e) => {
+  const items = [...repoList.querySelectorAll("li:not(.muted)")];
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    repoActive = Math.min(repoActive + 1, items.length - 1);
+    setRepoActive(items);
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    repoActive = Math.max(repoActive - 1, 0);
+    setRepoActive(items);
+  } else if (e.key === "Enter") {
+    if (!repoList.hidden && items[repoActive]) {
+      e.preventDefault();
+      selectRepo(items[repoActive].dataset.full);
+    } else if (!repoList.hidden) {
+      // Enter with the list open but nothing highlighted: keep the typed
+      // value, prefill defaults, close the list (submit still works after).
+      e.preventDefault();
+      const v = repoInput.value.trim();
+      if (v) setRepoDefaults(v);
+      closeRepoList();
+    }
+    // list hidden -> let the form submit normally
+  } else if (e.key === "Escape") {
+    closeRepoList();
   }
-  custom.hidden = true;
-  setRepoDefaults($("#repo").value);
-}
+});
+repoList.addEventListener("mousedown", (e) => {
+  const li = e.target.closest("li:not(.muted)");
+  if (li) {
+    e.preventDefault(); // beat input blur
+    selectRepo(li.dataset.full);
+  }
+});
+repoList.addEventListener("mouseover", (e) => {
+  const li = e.target.closest("li:not(.muted)");
+  if (!li) return;
+  repoActive = parseInt(li.dataset.index, 10);
+  setRepoActive([...repoList.querySelectorAll("li:not(.muted)")]);
+});
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".repo-combobox")) closeRepoList();
+});
 
 // ---- onboarding: env key-value rows ----
 
@@ -411,13 +484,8 @@ $("#admin-token").value = getToken(LS_ADMIN);
 $("#refresh").addEventListener("click", loadServices);
 $("#add-form").addEventListener("submit", submitAdd);
 $("#onboard-form").addEventListener("submit", submitOnboard);
-$("#repo").addEventListener("change", onRepoChange);
 $("#repo-refresh").addEventListener("click", loadRepos);
 $("#env-add").addEventListener("click", () => addEnvRow());
-$("#repo-custom").addEventListener("input", () => {
-  const repo = $("#repo-custom").value.trim();
-  if (repo) setRepoDefaults(repo);
-});
 
 loadServices();
 loadRepos();
