@@ -199,7 +199,26 @@ func (d *deployer) handleListOnboardEnvKeys(w http.ResponseWriter, r *http.Reque
 	if keys == nil {
 		keys = []string{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"keys": keys})
+
+	// Compose status for the current service name: whether onboarding will
+	// use a committed custom compose or generate the standard template, plus
+	// the list of existing service dirs so a name mismatch is visible.
+	out := map[string]any{"keys": keys}
+	if svc := r.URL.Query().Get("service"); svc != "" {
+		if serviceExists(d.cfg.ServicesDir, svc) {
+			out["compose"] = "existing"
+		} else {
+			out["compose"] = "missing"
+		}
+	}
+	if svcs, err := d.listServices(); err == nil {
+		names := make([]string, 0, len(svcs))
+		for _, s := range svcs {
+			names = append(names, s.Name)
+		}
+		out["existing_services"] = names
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (d *deployer) handleOnboard(w http.ResponseWriter, r *http.Request) {

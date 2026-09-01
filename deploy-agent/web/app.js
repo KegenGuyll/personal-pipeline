@@ -235,6 +235,7 @@ async function submitOnboard(e) {
     if (el("dockerfile")) el("dockerfile").value = "Dockerfile";
     if (el("overwrite")) el("overwrite").checked = false;
     $("#image-hint").textContent = "";
+    $("#compose-hint").textContent = "";
     populateEnv([]);
     renderOnboardResult(data);
     loadServices();
@@ -476,9 +477,35 @@ function populateEnv(keys) {
 async function loadEnvKeys(fullName) {
   if (!fullName) return;
   const token = getToken(LS_READ) || getToken(LS_ADMIN);
-  const { status, data } = await api("/onboard/env-keys?repo=" + encodeURIComponent(fullName), { token });
+  const form = $("#onboard-form");
+  const service = form.elements.namedItem("service") ? form.elements.namedItem("service").value.trim() : "";
+  const { status, data } = await api(
+    "/onboard/env-keys?repo=" + encodeURIComponent(fullName) + (service ? "&service=" + encodeURIComponent(service) : ""),
+    { token }
+  );
   if (status !== 200) return;
   populateEnv(data.keys || []);
+  setComposeHint(data);
+}
+
+// setComposeHint tells the user whether the current service name maps to an
+// existing (custom) compose or will get the standard template — making a name
+// mismatch like "dsh-server" vs the committed "dsh" visible before submit.
+function setComposeHint(data) {
+  const hint = $("#compose-hint");
+  if (!hint) return;
+  if (data.compose === "existing") {
+    hint.textContent = "✓ Custom compose exists for this name — it will be used as-is.";
+    hint.className = "hint ok-hint";
+  } else if (data.compose === "missing") {
+    const existing = (data.existing_services || []).filter((s) => s && s !== "_template");
+    hint.textContent = "⚠ No compose for this name — the standard template will be generated." +
+      (existing.length ? " Existing services: " + existing.join(", ") : "");
+    hint.className = "hint warn-hint";
+  } else {
+    hint.textContent = "";
+    hint.className = "hint";
+  }
 }
 
 function buildEnv() {
@@ -515,6 +542,19 @@ $("#add-form").addEventListener("submit", submitAdd);
 $("#onboard-form").addEventListener("submit", submitOnboard);
 $("#repo-refresh").addEventListener("click", loadRepos);
 $("#env-add").addEventListener("click", () => addEnvRow());
+
+// Changing the service name re-checks whether a custom compose exists for it.
+const serviceField = $("#onboard-form").elements.namedItem("service");
+if (serviceField) {
+  let serviceDebounce = null;
+  serviceField.addEventListener("input", () => {
+    clearTimeout(serviceDebounce);
+    serviceDebounce = setTimeout(() => {
+      const repo = $("#repo").value.trim();
+      if (repo) loadEnvKeys(repo);
+    }, 400);
+  });
+}
 
 loadServices();
 loadRepos();

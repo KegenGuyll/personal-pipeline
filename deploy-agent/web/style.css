@@ -155,6 +155,8 @@ details.advanced[open] summary::before { content: "▾ "; }
 details.advanced[open] summary { padding-bottom: 12px; }
 
 .hint { color: var(--muted); font-size: 0.78rem; margin: 8px 0 0; }
+.hint.ok-hint { color: var(--ok); }
+.hint.warn-hint { color: var(--warn); }
 .error { color: var(--bad); font-size: 0.85rem; margin: 10px 0 0; }
 .empty { color: var(--muted); text-align: center; padding: 14px; }
 
