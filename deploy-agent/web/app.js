@@ -262,9 +262,11 @@ function renderOnboardResult(r) {
   const pr = r.pr
     ? `<br><a href="${esc(r.pr.url)}" target="_blank" rel="noopener">Pull request #${esc(r.pr.number)}</a> (${esc(r.pr.state)}) — review and merge it to activate deploys.`
     : "";
+  const secrets = "SERVICE_ENV secret: set" +
+    (r.webhook_secrets ? " · webhook secrets: set" : "");
   showOnboardResult(
     `<span class="title">Onboarded ${esc(r.repo)}</span> as service <strong>${esc(r.service)}</strong> (${esc(r.image)}).` +
-      ` Compose file: ${esc(r.compose)} · SERVICE_ENV secret: set` +
+      ` Compose file: ${esc(r.compose)} · ${secrets}` +
       (warns ? `<ul>${warns}</ul>` : "") + pr
   );
 }

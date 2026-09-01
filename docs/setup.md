@@ -154,8 +154,10 @@ Ensure your TLS certificate covers each name (or use a wildcard cert).
 
 ## 6. GitHub secrets
 
-Create these secrets (at the **organization** or **user** level so every repo
-gets them automatically):
+These secrets are needed by every project repo's workflow. They're created
+**automatically per-repo during onboarding** when the server has
+`DEPLOY_WEBHOOK_URL` set in `stack/.env` (see step 7). For repos wired by hand,
+create them at the **organization** or **user** level so every repo gets them:
 
 | Secret | Value |
 |---|---|

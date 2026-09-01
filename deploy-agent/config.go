@@ -32,6 +32,13 @@ type Config struct {
 	GithubAppInstallationID int64
 	PipelineOwner           string
 	PipelineRef             string
+
+	// DeployWebhookURL is the public URL of this agent's /hooks/deploy
+	// endpoint (e.g. https://deploy.example.com/hooks/deploy). When set,
+	// onboarding also creates DEPLOY_WEBHOOK_URL + DEPLOY_WEBHOOK_SECRET (=
+	// WEBHOOK_SECRET) in each project repo, so every onboarded repo can
+	// notify the agent with zero manual secret setup.
+	DeployWebhookURL string
 }
 
 func loadConfig() (*Config, error) {
@@ -55,6 +62,7 @@ func loadConfig() (*Config, error) {
 		GithubAppInstallationID: envInt64Or("GITHUB_APP_INSTALLATION_ID", 0),
 		PipelineOwner:           envOr("PIPELINE_OWNER", os.Getenv("GHCR_OWNER")),
 		PipelineRef:             envOr("PIPELINE_REF", "main"),
+		DeployWebhookURL:        os.Getenv("DEPLOY_WEBHOOK_URL"),
 	}
 
 	prefixes := splitNonEmpty(os.Getenv("ALLOWED_IMAGE_PREFIXES"))

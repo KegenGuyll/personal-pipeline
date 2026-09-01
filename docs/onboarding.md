@@ -6,7 +6,10 @@ things in one action:
 
 1. Creates the service's compose file on the server (`services/<name>/`) — same
    private Tailscale template as the dashboard's "Add service".
-2. Sets the project repo's `SERVICE_ENV` secret (the app's runtime env).
+2. Sets the project repo's `SERVICE_ENV` secret (the app's runtime env), plus —
+   when `DEPLOY_WEBHOOK_URL` is configured on the server — the
+   `DEPLOY_WEBHOOK_URL` / `DEPLOY_WEBHOOK_SECRET` pair, so no manual GitHub
+   secrets are needed for onboarded repos.
 3. Opens a **pull request** that adds `.github/workflows/deploy.yml`.
 
 The PR is **never auto-merged** — you review the workflow snippet, then merge.
@@ -18,6 +21,8 @@ wired project.
         │
         ├─ writes services/<name>/docker-compose.yml      (server)
         ├─ sets SERVICE_ENV secret in the project repo    (GitHub API)
+        ├─ sets DEPLOY_WEBHOOK_URL / DEPLOY_WEBHOOK_SECRET (GitHub API,
+        │    when DEPLOY_WEBHOOK_URL is configured on the server)
         └─ opens PR adding .github/workflows/deploy.yml   (GitHub API)
                                    │ human review + merge
                                    ▼
@@ -131,8 +136,10 @@ reports `compose: created|existing` and any warnings.
   `deploy.yml` returns `409` unless `overwrite_workflow` is set.
 - **Existing services are untouched.** `personal-finance` and anything already
   deployed keep working; onboarding is only for new projects.
-- **`DEPLOY_WEBHOOK_URL` / `DEPLOY_WEBHOOK_SECRET`** stay at org/user level, so
-  the generated workflow resolves them automatically in every repo.
+- **`DEPLOY_WEBHOOK_URL` / `DEPLOY_WEBHOOK_SECRET`** are set per-repo
+  automatically when `DEPLOY_WEBHOOK_URL` is configured in the server's
+  `stack/.env` (they're also fine to keep at org/user level for repos wired
+  manually).
 
 ## Troubleshooting
 
