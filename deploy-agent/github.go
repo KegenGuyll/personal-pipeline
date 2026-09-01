@@ -439,12 +439,20 @@ func (c *githubAppClient) doJSON(ctx context.Context, method, path, token string
 
 	resp, err := c.http.Do(req)
 	if err != nil {
+		logEvent("github.api_error", map[string]any{
+			"method": method, "path": path, "status": 0, "error": err.Error(),
+		})
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		msg := readLimited(resp.Body, 512)
+		// Surface every GitHub API failure in the agent log, not just in the
+		// response body (which Cloudflare's 502 page hides).
+		logEvent("github.api_error", map[string]any{
+			"method": method, "path": path, "status": resp.StatusCode, "message": msg,
+		})
 		return resp, &githubAPIError{Status: resp.StatusCode, Message: msg, Path: path}
 	}
 	if out != nil {

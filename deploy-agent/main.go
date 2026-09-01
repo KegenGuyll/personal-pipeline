@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 func main() {
@@ -55,9 +56,35 @@ func main() {
 
 	addr := ":" + cfg.Port
 	logEvent("server.start", map[string]any{"addr": addr, "services_dir": cfg.ServicesDir})
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	if err := http.ListenAndServe(addr, logRequests(mux)); err != nil {
 		log.Fatalf("listen: %v", err)
 	}
+}
+
+// statusRecorder captures the response status so the access log can include it.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+// logRequests emits one http.request event per inbound request (method, path,
+// status, duration) — the agent's own access log, so what happened behind a
+// proxy (e.g. a Cloudflare 502 page hiding the body) is always visible here.
+func logRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		logEvent("http.request", map[string]any{
+			"method": r.Method, "path": r.URL.Path, "status": rec.status,
+			"duration_ms": time.Since(start).Milliseconds(),
+		})
+	})
 }
 
 func handleHealthz(w http.ResponseWriter, r *http.Request) {
