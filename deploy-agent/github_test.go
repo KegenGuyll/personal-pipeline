@@ -418,3 +418,43 @@ func TestWorkflowWriteHint(t *testing.T) {
 		t.Fatalf("expected no hint for transport error, got %q", got)
 	}
 }
+
+// Regression: when .github/workflows/deploy.yml already exists on the target
+// branch (e.g. main gained it after a prior onboarding PR was merged), the
+// commit PUT must include the existing file's sha or GitHub 422s with
+// '"sha" wasn't supplied'.
+func TestOpenWorkflowPRUpdatesExistingFileWithSHA(t *testing.T) {
+	var putBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/app/installations/7/access_tokens":
+			writeJSON(w, http.StatusCreated, map[string]string{
+				"token": "inst-tok", "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/git/ref/heads/main":
+			writeJSON(w, http.StatusOK, map[string]any{"object": map[string]string{"sha": "abc123"}})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/git/refs":
+			writeJSON(w, http.StatusCreated, map[string]string{"ref": "refs/heads/pipeline/onboard-web"})
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/contents/.github/workflows/deploy.yml"):
+			writeJSON(w, http.StatusOK, map[string]string{"sha": "existing-file-sha"})
+		case r.Method == http.MethodPut && r.URL.Path == "/repos/o/r/contents/.github/workflows/deploy.yml":
+			_ = json.NewDecoder(r.Body).Decode(&putBody)
+			writeJSON(w, http.StatusOK, map[string]string{"commit": "sha1"})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/pulls":
+			writeJSON(w, http.StatusCreated, map[string]any{"number": 5, "html_url": "https://github.com/o/r/pull/5"})
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := &githubAppClient{appID: 1, key: testAppKey(t), installationID: 7, apiURL: srv.URL, http: srv.Client()}
+	if _, err := c.openWorkflowPR(context.Background(), "o", "r", workflowPRParams{
+		Service: "web", BaseBranch: "main", Content: "name: Deploy\n",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if putBody["sha"] != "existing-file-sha" {
+		t.Fatalf("commit body sha = %v, want existing-file-sha", putBody["sha"])
+	}
+}

@@ -410,11 +410,24 @@ func (c *githubAppClient) openWorkflowPR(ctx context.Context, owner, repo string
 	}
 	logEvent("onboard.branch_created", map[string]any{"repo": owner + "/" + repo, "branch": branch})
 
-	// 3. Commit the workflow file to the branch.
+	// 3. Commit the workflow file to the branch (create or update). If the
+	// file already exists on the branch — e.g. inherited from a main that
+	// gained it after a prior onboarding PR was merged — GitHub requires the
+	// existing file's sha to allow the update, so fetch it first.
+	existingSHA := ""
+	var existing struct {
+		SHA string `json:"sha"`
+	}
+	if _, err := c.doJSON(ctx, http.MethodGet, "/repos/"+owner+"/"+repo+"/contents/.github/workflows/deploy.yml?ref="+url.QueryEscape(branch), tok, nil, &existing); err == nil {
+		existingSHA = existing.SHA
+	}
 	commit := map[string]any{
 		"message": "Add pipeline deploy workflow",
 		"content": base64.StdEncoding.EncodeToString([]byte(p.Content)),
 		"branch":  branch,
+	}
+	if existingSHA != "" {
+		commit["sha"] = existingSHA
 	}
 	if _, err := c.doJSON(ctx, http.MethodPut, "/repos/"+owner+"/"+repo+"/contents/.github/workflows/deploy.yml", tok, commit, nil); err != nil {
 		return workflowPRResult{}, fmt.Errorf("commit workflow file: %w%s", err, workflowWriteHint(err))
