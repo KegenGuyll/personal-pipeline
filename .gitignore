@@ -17,3 +17,6 @@ deploy-agent/deploy-agent
 # OS / editor
 .DS_Store
 *.swp
+
+# Root-level Go cache (accidental)
+/.gocache/

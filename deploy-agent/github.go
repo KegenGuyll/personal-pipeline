@@ -384,7 +384,7 @@ func (c *githubAppClient) openWorkflowPR(ctx context.Context, owner, repo string
 		"branch":  branch,
 	}
 	if _, err := c.doJSON(ctx, http.MethodPut, "/repos/"+owner+"/"+repo+"/contents/.github/workflows/deploy.yml", tok, commit, nil); err != nil {
-		return workflowPRResult{}, fmt.Errorf("commit workflow file: %w", err)
+		return workflowPRResult{}, fmt.Errorf("commit workflow file: %w%s", err, workflowWriteHint(err))
 	}
 
 	// 4. Open the PR. Deliberately no merge — a human reviews it.
@@ -400,6 +400,18 @@ func (c *githubAppClient) openWorkflowPR(ctx context.Context, owner, repo string
 }
 
 // ---- helpers ----
+
+// workflowWriteHint appends a targeted fix hint when a GitHub App is denied
+// writing a workflow file — a well-known gotcha: Contents: write alone is not
+// enough for .github/workflows/**, the app also needs Actions: write (and the
+// install must be re-approved after permission changes).
+func workflowWriteHint(err error) string {
+	var ge *githubAPIError
+	if errors.As(err, &ge) && ge.Status == http.StatusForbidden {
+		return " (hint: writing .github/workflows/ files requires the GitHub App's Actions permission set to Read and write — then re-install the app to apply it)"
+	}
+	return ""
+}
 
 // sealBox encrypts msg for the repo's Actions-secrets public key using a
 // libsodium-style sealed box (X25519-XSalsa20-Poly1305), as required by
