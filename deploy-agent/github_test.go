@@ -197,6 +197,85 @@ func TestOpenWorkflowPRNeverMerges(t *testing.T) {
 	}
 }
 
+// Regression: a name collision (422 on POST /git/refs) must retry with a
+// numeric suffix — the if-initializer scoping bug swallowed the err (and the
+// retry) and surfaced "%!w(<nil>)".
+func TestOpenWorkflowPRRetriesBranchCollision(t *testing.T) {
+	refsCalls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app/installations/7/access_tokens":
+			writeJSON(w, http.StatusCreated, map[string]string{
+				"token": "inst-tok", "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+			})
+		case "/repos/o/r/git/ref/heads/main":
+			writeJSON(w, http.StatusOK, map[string]any{"object": map[string]string{"sha": "abc123"}})
+		case "/repos/o/r/git/refs":
+			refsCalls++
+			if refsCalls == 1 {
+				http.Error(w, `{"message":"Reference already exists"}`, http.StatusUnprocessableEntity)
+				return
+			}
+			writeJSON(w, http.StatusCreated, map[string]string{"ref": "refs/heads/pipeline/onboard-web-2"})
+		case "/repos/o/r/contents/.github/workflows/deploy.yml":
+			writeJSON(w, http.StatusCreated, map[string]string{"commit": "sha1"})
+		case "/repos/o/r/pulls":
+			writeJSON(w, http.StatusCreated, map[string]any{"number": 9, "html_url": "https://github.com/o/r/pull/9"})
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := &githubAppClient{appID: 1, key: testAppKey(t), installationID: 7, apiURL: srv.URL, http: srv.Client()}
+	res, err := c.openWorkflowPR(context.Background(), "o", "r", workflowPRParams{
+		Service: "web", BaseBranch: "main", Content: "name: Deploy\n",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Branch != "pipeline/onboard-web-2" {
+		t.Fatalf("branch = %q, want pipeline/onboard-web-2", res.Branch)
+	}
+	if refsCalls != 2 {
+		t.Fatalf("refs calls = %d, want 2", refsCalls)
+	}
+}
+
+// Regression: a hard failure (403) must surface the real GitHub error with its
+// status — never "%!w(<nil>)".
+func TestOpenWorkflowPRSurfacesRealError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app/installations/7/access_tokens":
+			writeJSON(w, http.StatusCreated, map[string]string{
+				"token": "inst-tok", "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+			})
+		case "/repos/o/r/git/ref/heads/main":
+			writeJSON(w, http.StatusOK, map[string]any{"object": map[string]string{"sha": "abc123"}})
+		case "/repos/o/r/git/refs":
+			http.Error(w, `{"message":"Resource not accessible by integration"}`, http.StatusForbidden)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := &githubAppClient{appID: 1, key: testAppKey(t), installationID: 7, apiURL: srv.URL, http: srv.Client()}
+	_, err := c.openWorkflowPR(context.Background(), "o", "r", workflowPRParams{
+		Service: "web", BaseBranch: "main", Content: "name: Deploy\n",
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "create branch") || !strings.Contains(err.Error(), "(status 403)") {
+		t.Fatalf("error does not carry the real GitHub failure: %v", err)
+	}
+	if strings.Contains(err.Error(), "%!w") {
+		t.Fatalf("error contains fmt artifact: %v", err)
+	}
+}
+
 func TestHasFile(t *testing.T) {
 	srv, _ := newTestGithubServer(t, 7)
 	defer srv.Close()

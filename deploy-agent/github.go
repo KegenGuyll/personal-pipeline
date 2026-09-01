@@ -337,7 +337,11 @@ func (c *githubAppClient) openWorkflowPR(ctx context.Context, owner, repo string
 	created := false
 	for i := 0; i < 10; i++ {
 		body := map[string]string{"ref": "refs/heads/" + branch, "sha": ref.Object.SHA}
-		if _, err := c.doJSON(ctx, http.MethodPost, "/repos/"+owner+"/"+repo+"/git/refs", tok, body, nil); err == nil {
+		// Declare err with := so the same value is visible to the checks below;
+		// an if-initializer scoped err would be nil here and swallow the real
+		// GitHub error (and break the 422 collision retry).
+		_, err := c.doJSON(ctx, http.MethodPost, "/repos/"+owner+"/"+repo+"/git/refs", tok, body, nil)
+		if err == nil {
 			created = true
 			break
 		}
