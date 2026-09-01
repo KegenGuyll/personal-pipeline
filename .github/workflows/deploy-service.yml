@@ -109,6 +109,18 @@ jobs:
           python3 - <<'PY'
           import json, os, hmac, hashlib, sys, urllib.request, urllib.error
 
+          webhook_url = os.environ.get("WEBHOOK_URL", "")
+          webhook_secret = os.environ.get("WEBHOOK_SECRET", "")
+          if not webhook_url or not webhook_secret:
+              print(
+                  "DEPLOY_WEBHOOK_URL / DEPLOY_WEBHOOK_SECRET are not set (or empty) for this "
+                  "repo — create them at the user/org level (github.com/settings/secrets/actions) "
+                  "so every project repo inherits them; DEPLOY_WEBHOOK_SECRET must match "
+                  "WEBHOOK_SECRET in the server's stack/.env",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
           env_obj = {}
           if os.environ.get("SERVICE_ENV"):
               env_obj = json.loads(os.environ["SERVICE_ENV"])
@@ -123,11 +135,11 @@ jobs:
           }
           body = json.dumps(payload).encode()
           sig = "sha256=" + hmac.new(
-              os.environ["WEBHOOK_SECRET"].encode(), body, hashlib.sha256
+              webhook_secret.encode(), body, hashlib.sha256
           ).hexdigest()
 
           req = urllib.request.Request(
-              os.environ["WEBHOOK_URL"],
+              webhook_url,
               data=body,
               method="POST",
               headers={
