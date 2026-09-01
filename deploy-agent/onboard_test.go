@@ -23,6 +23,8 @@ type fakeGithub struct {
 	prErr         error
 	repos         []githubRepo
 	reposErr      error
+	diag          map[string]any
+	diagErr       error
 	secretValues  map[string]string
 	prParams      *workflowPRParams
 }
@@ -57,6 +59,13 @@ func (f *fakeGithub) listRepos(_ context.Context) ([]githubRepo, error) {
 		return nil, f.reposErr
 	}
 	return f.repos, nil
+}
+
+func (f *fakeGithub) diagnostics(_ context.Context) (map[string]any, error) {
+	if f.diagErr != nil {
+		return nil, f.diagErr
+	}
+	return f.diag, nil
 }
 
 func (f *fakeGithub) openWorkflowPR(_ context.Context, _, _ string, p workflowPRParams) (workflowPRResult, error) {
@@ -258,6 +267,52 @@ func TestHandleListOnboardRepos(t *testing.T) {
 	d.handleListOnboardRepos(w4, req4)
 	if w4.Code != http.StatusBadGateway {
 		t.Fatalf("code = %d, want 502", w4.Code)
+	}
+}
+
+func TestHandleOnboardDiagnostics(t *testing.T) {
+	d := newOnboardDeployer(t, &fakeGithub{diag: map[string]any{
+		"id":          float64(987),
+		"permissions": map[string]any{"contents": "write"},
+	}})
+	d.cfg.ReadToken = "readtok"
+
+	req := httptest.NewRequest("GET", "/onboard/diagnostics", nil)
+	req.Header.Set("Authorization", "Bearer readtok")
+	w := httptest.NewRecorder()
+	d.handleOnboardDiagnostics(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, body = %s", w.Code, w.Body.String())
+	}
+	var out struct {
+		Installation map[string]any `json:"installation"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	perms := out.Installation["permissions"].(map[string]any)
+	if perms["contents"] != "write" {
+		t.Fatalf("permissions = %v", perms)
+	}
+
+	// Disabled when the app client is missing.
+	d.gh = nil
+	req2 := httptest.NewRequest("GET", "/onboard/diagnostics", nil)
+	req2.Header.Set("Authorization", "Bearer readtok")
+	w2 := httptest.NewRecorder()
+	d.handleOnboardDiagnostics(w2, req2)
+	if w2.Code != http.StatusNotFound {
+		t.Fatalf("code = %d, want 404", w2.Code)
+	}
+
+	// Upstream failure -> 502.
+	d.gh = &fakeGithub{diagErr: errors.New("boom")}
+	req3 := httptest.NewRequest("GET", "/onboard/diagnostics", nil)
+	req3.Header.Set("Authorization", "Bearer readtok")
+	w3 := httptest.NewRecorder()
+	d.handleOnboardDiagnostics(w3, req3)
+	if w3.Code != http.StatusBadGateway {
+		t.Fatalf("code = %d, want 502", w3.Code)
 	}
 }
 
