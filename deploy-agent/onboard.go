@@ -167,7 +167,7 @@ func (d *deployer) handleOnboardDiagnostics(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"installation": info})
+	writeJSON(w, http.StatusOK, info)
 }
 
 func (d *deployer) handleOnboard(w http.ResponseWriter, r *http.Request) {
