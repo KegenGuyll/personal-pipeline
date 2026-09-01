@@ -148,6 +148,28 @@ func (d *deployer) handleListOnboardRepos(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{"repos": repos})
 }
 
+// handleOnboardDiagnostics reports what GitHub actually granted the app's
+// installation (permissions, account, repo selection) — the definitive check
+// for "Resource not accessible by integration" 403s. Read-gated.
+func (d *deployer) handleOnboardDiagnostics(w http.ResponseWriter, r *http.Request) {
+	if !d.authorizeRead(w, r) {
+		return
+	}
+	if !d.onboardingConfigured() {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": "onboarding disabled — set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_B64 on the server",
+		})
+		return
+	}
+	info, err := d.gh.diagnostics(r.Context())
+	if err != nil {
+		logEvent("onboard.diagnostics_error", map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"installation": info})
+}
+
 func (d *deployer) handleOnboard(w http.ResponseWriter, r *http.Request) {
 	if !d.authorizeWrite(w, r) {
 		return

@@ -44,6 +44,11 @@ type githubClient interface {
 	// repository dropdown.
 	listRepos(ctx context.Context) ([]githubRepo, error)
 
+	// diagnostics returns what GitHub actually granted this installation:
+	// install ID, account, repo selection, and the live permissions map.
+	// Used to debug "Resource not accessible by integration" 403s.
+	diagnostics(ctx context.Context) (map[string]any, error)
+
 	// openWorkflowPR creates a branch from the base branch, commits the given
 	// deploy.yml content to it, and opens a PR. It NEVER merges — the PR is
 	// left open for human review.
@@ -274,6 +279,22 @@ func (c *githubAppClient) listRepos(ctx context.Context) ([]githubRepo, error) {
 	}
 	sort.Slice(repos, func(i, j int) bool { return repos[i].FullName < repos[j].FullName })
 	return repos, nil
+}
+
+// diagnostics reports what GitHub actually granted this installation, so 403s
+// like "Resource not accessible by integration" can be checked against the
+// real permission set instead of guessed at. GET /installation is called with
+// the installation token itself and returns its live permissions.
+func (c *githubAppClient) diagnostics(ctx context.Context) (map[string]any, error) {
+	tok, err := c.tokenForInstallation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	if _, err := c.doJSON(ctx, http.MethodGet, "/installation", tok, nil, &out); err != nil {
+		return nil, fmt.Errorf("fetch installation info: %w", err)
+	}
+	return out, nil
 }
 
 // nextLink extracts the URL of the next page from a GitHub Link header.
