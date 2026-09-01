@@ -39,6 +39,12 @@ type Config struct {
 	// WEBHOOK_SECRET) in each project repo, so every onboarded repo can
 	// notify the agent with zero manual secret setup.
 	DeployWebhookURL string
+
+	// TailscaleAuthKey is the shared tailnet auth key injected into every
+	// onboarded service's SERVICE_ENV (the sidecar requires TS_AUTHKEY).
+	// Optional: if unset, onboarding requires the caller to provide
+	// TS_AUTHKEY explicitly.
+	TailscaleAuthKey string
 }
 
 func loadConfig() (*Config, error) {
@@ -63,6 +69,7 @@ func loadConfig() (*Config, error) {
 		PipelineOwner:           envOr("PIPELINE_OWNER", os.Getenv("GHCR_OWNER")),
 		PipelineRef:             envOr("PIPELINE_REF", "main"),
 		DeployWebhookURL:        os.Getenv("DEPLOY_WEBHOOK_URL"),
+		TailscaleAuthKey:        os.Getenv("TS_AUTHKEY"),
 	}
 
 	prefixes := splitNonEmpty(os.Getenv("ALLOWED_IMAGE_PREFIXES"))

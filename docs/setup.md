@@ -181,7 +181,9 @@ To onboard new projects from the dashboard without editing each repo by hand
    install the app on your account (All repositories or the ones you'll onboard).
 4. Add to `stack/.env`: `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_B64`
    (`base64 -i key.pem | tr -d '\n'`), optionally `GITHUB_APP_INSTALLATION_ID`
-   / `PIPELINE_OWNER` / `PIPELINE_REF`. Restart the agent.
+   / `PIPELINE_OWNER` / `PIPELINE_REF` / `DEPLOY_WEBHOOK_URL` (auto webhook
+   secrets) / `TS_AUTHKEY` (shared key injected into every onboarded service's
+   env). Restart the agent.
 
 Full walkthrough in [onboarding.md](onboarding.md).
 

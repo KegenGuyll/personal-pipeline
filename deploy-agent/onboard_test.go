@@ -25,6 +25,8 @@ type fakeGithub struct {
 	reposErr      error
 	diag          map[string]any
 	diagErr       error
+	envKeys       []string
+	envKeysErr    error
 	secretValues  map[string]string
 	prParams      *workflowPRParams
 }
@@ -68,6 +70,13 @@ func (f *fakeGithub) diagnostics(_ context.Context) (map[string]any, error) {
 	return f.diag, nil
 }
 
+func (f *fakeGithub) sampleEnvKeys(_ context.Context, _, _ string) ([]string, error) {
+	if f.envKeysErr != nil {
+		return nil, f.envKeysErr
+	}
+	return f.envKeys, nil
+}
+
 func (f *fakeGithub) openWorkflowPR(_ context.Context, _, _ string, p workflowPRParams) (workflowPRResult, error) {
 	if f.prErr != nil {
 		return workflowPRResult{}, f.prErr
@@ -86,6 +95,7 @@ func newOnboardDeployer(t *testing.T, gh githubClient) *deployer {
 			AdminToken:           "admintok",
 			PipelineOwner:        "alice",
 			PipelineRef:          "main",
+			TailscaleAuthKey:     "tskey-test",
 		},
 		gh: gh,
 	}
@@ -333,8 +343,9 @@ func TestHandleOnboardSuccess(t *testing.T) {
 	if pr["state"] != "open" || pr["number"].(float64) != 11 {
 		t.Fatalf("pr = %v", pr)
 	}
-	if gh.secretValues["SERVICE_ENV"] != `{"API_KEY":"x"}` {
-		t.Fatalf("secret value = %q", gh.secretValues["SERVICE_ENV"])
+	envJSON := gh.secretValues["SERVICE_ENV"]
+	if !strings.Contains(envJSON, `"API_KEY":"x"`) || !strings.Contains(envJSON, `"TS_AUTHKEY":"tskey-test"`) {
+		t.Fatalf("secret value = %q", envJSON)
 	}
 	if gh.prParams == nil || gh.prParams.Content == "" || !strings.Contains(gh.prParams.Content, "service: web") {
 		t.Fatalf("pr params = %+v", gh.prParams)
@@ -367,7 +378,7 @@ func TestHandleOnboardSetsWebhookSecrets(t *testing.T) {
 	if gh.secretValues["DEPLOY_WEBHOOK_SECRET"] != "server-webhook-secret" {
 		t.Fatalf("webhook secret = %q", gh.secretValues["DEPLOY_WEBHOOK_SECRET"])
 	}
-	if gh.secretValues["SERVICE_ENV"] != "{}" {
+	if gh.secretValues["SERVICE_ENV"] != `{"TS_AUTHKEY":"tskey-test"}` {
 		t.Fatalf("service env = %q", gh.secretValues["SERVICE_ENV"])
 	}
 }
@@ -515,5 +526,98 @@ func TestHandleOnboardUnauthorized(t *testing.T) {
 	d.handleOnboard(w, req)
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("code = %d, want 401", w.Code)
+	}
+}
+
+func TestHandleOnboardRequiresTSAuthKey(t *testing.T) {
+	gh := &fakeGithub{defaultBranch: "main"}
+	d := newOnboardDeployer(t, gh)
+	d.cfg.TailscaleAuthKey = "" // no server key
+
+	w, out := onboardRequest(t, d, `{"repo":"alice/web"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, want 400", w.Code)
+	}
+	if !strings.Contains(out["error"].(string), "TS_AUTHKEY") {
+		t.Fatalf("error = %v", out["error"])
+	}
+}
+
+func TestHandleOnboardUserTSAuthKeyWins(t *testing.T) {
+	gh := &fakeGithub{defaultBranch: "main", files: map[string]bool{"Dockerfile": true}}
+	d := newOnboardDeployer(t, gh)
+
+	w, out := onboardRequest(t, d, `{"repo":"alice/web","env":{"TS_AUTHKEY":"tskey-custom"}}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("code = %d, body = %s", w.Code, w.Body.String())
+	}
+	if out["ts_authkey"] != "provided" {
+		t.Fatalf("ts_authkey = %v", out["ts_authkey"])
+	}
+	if !strings.Contains(gh.secretValues["SERVICE_ENV"], `"TS_AUTHKEY":"tskey-custom"`) {
+		t.Fatalf("secret = %q", gh.secretValues["SERVICE_ENV"])
+	}
+}
+
+func TestHandleOnboardEnvKeys(t *testing.T) {
+	d := newOnboardDeployer(t, &fakeGithub{envKeys: []string{"API_KEY", "DATABASE_URL"}})
+	d.cfg.ReadToken = "readtok"
+
+	req := httptest.NewRequest("GET", "/onboard/env-keys?repo=alice/web", nil)
+	req.Header.Set("Authorization", "Bearer readtok")
+	w := httptest.NewRecorder()
+	d.handleListOnboardEnvKeys(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, body = %s", w.Code, w.Body.String())
+	}
+	var out struct {
+		Keys []string `json:"keys"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Keys) != 2 || out.Keys[0] != "API_KEY" {
+		t.Fatalf("keys = %v", out.Keys)
+	}
+
+	// Bad repo -> 400.
+	req2 := httptest.NewRequest("GET", "/onboard/env-keys?repo=nope", nil)
+	req2.Header.Set("Authorization", "Bearer readtok")
+	w2 := httptest.NewRecorder()
+	d.handleListOnboardEnvKeys(w2, req2)
+	if w2.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, want 400", w2.Code)
+	}
+
+	// Disabled when the app client is missing.
+	d.gh = nil
+	req3 := httptest.NewRequest("GET", "/onboard/env-keys?repo=alice/web", nil)
+	req3.Header.Set("Authorization", "Bearer readtok")
+	w3 := httptest.NewRecorder()
+	d.handleListOnboardEnvKeys(w3, req3)
+	if w3.Code != http.StatusNotFound {
+		t.Fatalf("code = %d, want 404", w3.Code)
+	}
+}
+
+func TestParseEnvKeys(t *testing.T) {
+	sample := `# app config
+API_KEY=
+DATABASE_URL=postgres://localhost/db
+export PORT=3000
+
+TS_AUTHKEY=tskey-xxx
+INVALID KEY=x
+# comment line
+`
+	keys := parseEnvKeys(sample)
+	want := []string{"API_KEY", "DATABASE_URL", "PORT", "TS_AUTHKEY"}
+	if len(keys) != len(want) {
+		t.Fatalf("keys = %v, want %v", keys, want)
+	}
+	for i := range want {
+		if keys[i] != want[i] {
+			t.Fatalf("keys = %v, want %v", keys, want)
+		}
 	}
 }

@@ -49,6 +49,11 @@ type githubClient interface {
 	// Used to debug "Resource not accessible by integration" 403s.
 	diagnostics(ctx context.Context) (map[string]any, error)
 
+	// sampleEnvKeys returns the variable names declared by the repo's
+	// env-example file (.env.example, .example.env, ...) on the default
+	// branch, if present — used to pre-fill the onboarding env form.
+	sampleEnvKeys(ctx context.Context, owner, repo string) ([]string, error)
+
 	// openWorkflowPR creates a branch from the base branch, commits the given
 	// deploy.yml content to it, and opens a PR. It NEVER merges — the PR is
 	// left open for human review.
@@ -327,6 +332,89 @@ func (c *githubAppClient) diagnostics(ctx context.Context) (map[string]any, erro
 		}
 	}
 	return out, nil
+}
+
+// envSampleCandidates are the conventional env-example filenames checked in
+// order when pre-filling the onboarding env form.
+var envSampleCandidates = []string{
+	".env.example",
+	".example.env",
+	".env.sample",
+	".env.template",
+	".env.dist",
+	"env.example",
+}
+
+func (c *githubAppClient) sampleEnvKeys(ctx context.Context, owner, repo string) ([]string, error) {
+	for _, path := range envSampleCandidates {
+		content, err := c.getFile(ctx, owner, repo, "", path)
+		if err != nil {
+			var ge *githubAPIError
+			if errors.As(err, &ge) && ge.Status == http.StatusNotFound {
+				continue
+			}
+			return nil, err
+		}
+		return parseEnvKeys(content), nil
+	}
+	return []string{}, nil
+}
+
+// getFile returns the decoded text content of a repo file at ref ("" = the
+// default branch).
+func (c *githubAppClient) getFile(ctx context.Context, owner, repo, ref, path string) (string, error) {
+	tok, err := c.tokenForInstallation(ctx)
+	if err != nil {
+		return "", err
+	}
+	u := "/repos/" + owner + "/" + repo + "/contents/" + escapePath(path)
+	if ref != "" {
+		u += "?ref=" + url.QueryEscape(ref)
+	}
+	var out struct {
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
+	}
+	if _, err := c.doJSON(ctx, http.MethodGet, u, tok, nil, &out); err != nil {
+		return "", err
+	}
+	if out.Encoding == "base64" {
+		b, err := base64.StdEncoding.DecodeString(out.Content)
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
+	}
+	return out.Content, nil
+}
+
+// parseEnvKeys extracts the variable names from a dotenv-style sample file
+// (ignores comments, export prefixes, and lines without '='). Values are
+// deliberately not returned — sample values are placeholders, never real ones.
+func parseEnvKeys(content string) []string {
+	seen := map[string]bool{}
+	var keys []string
+	for _, line := range strings.Split(content, "\n") {
+		s := strings.TrimSpace(strings.TrimRight(line, "\r"))
+		if s == "" || strings.HasPrefix(s, "#") {
+			continue
+		}
+		s = strings.TrimPrefix(s, "export ")
+		eq := strings.IndexByte(s, '=')
+		if eq < 0 {
+			continue
+		}
+		key := strings.TrimSpace(s[:eq])
+		if !envKeyRe.MatchString(key) {
+			continue
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 // nextLink extracts the URL of the next page from a GitHub Link header.
