@@ -408,6 +408,7 @@ func (c *githubAppClient) openWorkflowPR(ctx context.Context, owner, repo string
 	if !created {
 		return workflowPRResult{}, errors.New("create branch: too many name collisions")
 	}
+	logEvent("onboard.branch_created", map[string]any{"repo": owner + "/" + repo, "branch": branch})
 
 	// 3. Commit the workflow file to the branch.
 	commit := map[string]any{
@@ -418,6 +419,7 @@ func (c *githubAppClient) openWorkflowPR(ctx context.Context, owner, repo string
 	if _, err := c.doJSON(ctx, http.MethodPut, "/repos/"+owner+"/"+repo+"/contents/.github/workflows/deploy.yml", tok, commit, nil); err != nil {
 		return workflowPRResult{}, fmt.Errorf("commit workflow file: %w", err)
 	}
+	logEvent("onboard.file_committed", map[string]any{"repo": owner + "/" + repo, "branch": branch})
 
 	// 4. Open the PR. Deliberately no merge — a human reviews it.
 	var out struct {
@@ -428,6 +430,7 @@ func (c *githubAppClient) openWorkflowPR(ctx context.Context, owner, repo string
 	if _, err := c.doJSON(ctx, http.MethodPost, "/repos/"+owner+"/"+repo+"/pulls", tok, pr, &out); err != nil {
 		return workflowPRResult{}, fmt.Errorf("open pull request: %w", err)
 	}
+	logEvent("onboard.pr_opened", map[string]any{"repo": owner + "/" + repo, "branch": branch, "pr": out.Number, "url": out.HTMLURL})
 	return workflowPRResult{Number: out.Number, URL: out.HTMLURL, Branch: branch}, nil
 }
 
