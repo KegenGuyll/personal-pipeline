@@ -169,9 +169,12 @@ To onboard new projects from the dashboard without editing each repo by hand
 `deploy.yml`), create a GitHub App and wire it into the agent:
 
 1. GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App**.
-2. Permissions: **Contents: Read and write**, **Secrets: Read and write**,
+2. Permissions: **Contents: Read and write**, **Workflows: Read and write**
+   (needed to write files under `.github/workflows/`), **Secrets: Read and write**,
    **Pull requests: Read and write** (Metadata read is automatic). Webhook can
-   stay disabled — onboarding is dashboard/API-driven.
+   stay disabled — onboarding is dashboard/API-driven. If you change permissions
+   after installing, **re-install the app and restart the agent** for them to
+   take effect (the agent caches the installation token for up to an hour).
 3. Generate a **private key** (download the `.pem`) and note the **App ID**;
    install the app on your account (All repositories or the ones you'll onboard).
 4. Add to `stack/.env`: `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_B64`

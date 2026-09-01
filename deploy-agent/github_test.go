@@ -406,3 +406,15 @@ func TestNextLink(t *testing.T) {
 		t.Fatalf("next = %q, want empty", got)
 	}
 }
+
+func TestWorkflowWriteHint(t *testing.T) {
+	if got := workflowWriteHint(&githubAPIError{Status: http.StatusForbidden, Message: "nope"}); !strings.Contains(got, "Workflows") {
+		t.Fatalf("expected Workflows hint for 403, got %q", got)
+	}
+	if got := workflowWriteHint(&githubAPIError{Status: http.StatusNotFound, Message: "nope"}); got != "" {
+		t.Fatalf("expected no hint for 404, got %q", got)
+	}
+	if got := workflowWriteHint(errors.New("transport")); got != "" {
+		t.Fatalf("expected no hint for transport error, got %q", got)
+	}
+}
