@@ -39,9 +39,17 @@ wired project.
   | Permission | Access |
   |---|---|
   | Contents | **Read and write** (create the workflow file) |
+  | **Actions** | **Read and write** (required to write files under `.github/workflows/`) |
   | Secrets | **Read and write** (set `SERVICE_ENV`) |
   | Pull requests | **Read and write** (open the onboarding PR) |
   | Metadata | Read (required, granted automatically) |
+
+  > **Gotcha:** Contents: write alone is *not* enough to create `deploy.yml` —
+  > GitHub requires the **Actions** permission for workflow files. And any
+  > permission change only takes effect after the app is **re-installed**
+  > (or the "granted new permissions" prompt is approved). If onboarding fails
+  > with `commit workflow file ... Resource not accessible by integration
+  > (status 403)`, this is why — grant Actions, re-install, retry.
 
 - **Where can this app be installed?** "Only on this account" (or the org).
 - Create the app, then on its page generate a **private key** and download the
