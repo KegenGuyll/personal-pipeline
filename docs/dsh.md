@@ -40,9 +40,9 @@ Two caveats:
 `dsh web` **refuses `--host 0.0.0.0`** (upstream safety guard) and binds
 `127.0.0.1` by design. So:
 
-1. The `dsh` container uses `network_mode: service:tailscale` — it shares the
-   sidecar's network namespace, making `127.0.0.1:3080` local to the sidecar
-   (the `_template`'s `expose` + proxy-network hop could not reach a
+1. The `dsh-server` container uses `network_mode: service:tailscale` — it
+   shares the sidecar's network namespace, making `127.0.0.1:3080` local to the
+   sidecar (the `_template`'s `expose` + proxy-network hop could not reach a
    loopback-bound process in another container).
 2. `ts-serve` proxies to `http://127.0.0.1:3080` on that shared loopback.
 
@@ -59,12 +59,14 @@ and `/api` uses fetch/SSE (no WebSockets), so it proxies cleanly.
    `TS_AUTHKEY` (reuse the existing key), `DEEPSEEK_API_KEY`, and
    `DSH_TRUSTED_HOST` set to `dsh.<tailnet>.ts.net`; also ensure the
    `DEPLOY_WEBHOOK_URL` / `DEPLOY_WEBHOOK_SECRET` secrets exist.
-2. **This repo**: commit `services/dsh/docker-compose.yml` and push; on the
-   server `git pull` so the deploy agent sees the new service (compose
-   definitions are repo-only by design).
+2. **This repo**: the custom compose lives at `services/dsh-server/docker-compose.yml`
+   (committed — compose definitions are repo-only by design); on the server
+   `git pull` so the deploy agent sees it. The compose's MagicDNS hostname
+   defaults to `dsh` (`${TS_HOSTNAME:-dsh}`), keeping the browser URL and
+   `DSH_TRUSTED_HOST` unchanged.
 3. **Push `dsh-server` to `main`** → the workflow builds
-   `ghcr.io/kegenguyll/dsh:<sha>` (amd64 + arm64), notifies the agent, which
-   writes `services/dsh/.env` and runs `compose pull && up -d`.
+   `ghcr.io/kegenguyll/dsh-server:<sha>` (amd64 + arm64), notifies the agent, which
+   writes `services/dsh-server/.env` and runs `compose pull && up -d`.
 4. First boot auto-initializes the web profile under `/data/profiles/web`
    (shipped template) — nothing else to configure.
 
@@ -75,25 +77,26 @@ push. The pipeline rebuilds and redeploys; the volumes keep every session,
 setting, and file. Session logs are forward-compatible (versioned headers +
 read-compat path), and the web profile resolves bundles from the installed dsh
 first, so an old profile boots against a new install. If a future release ever
-requires a regenerated profile: `docker compose -f services/dsh/docker-compose.yml run --rm dsh rm -rf /data/profiles/web`
+requires a regenerated profile: `docker compose -f services/dsh-server/docker-compose.yml run --rm dsh-server rm -rf /data/profiles/web`
 (it rebuilds from the shipped template; sessions/settings live elsewhere).
 
 Rollback: every build leaves its `sha-…` tag in GHCR; put a previous
-`TAG=sha-xxxxxxx` in `services/dsh/.env` and run
-`docker compose -f services/dsh/docker-compose.yml up -d`.
+`TAG=sha-xxxxxxx` in `services/dsh-server/.env` and run
+`docker compose -f services/dsh-server/docker-compose.yml up -d`.
 
 ## Checking it works
 
 ```sh
 curl -fsS https://dsh.<tailnet>.ts.net/                      # 200 HTML
 docker compose -f stack/docker-compose.yml logs -f agent     # deploy log
-docker compose -f services/dsh/docker-compose.yml ps        # both healthy
+docker compose -f services/dsh-server/docker-compose.yml ps # both healthy
 ```
 
 Then the acceptance checklist from the plan: chat round-trip from a laptop
 (model configured via the Models page if needed), start a session, open it from
 the phone (Tailscale app + mobile browser), continue it from the computer,
-`docker compose restart dsh` + a redeploy and confirm sessions are still there.
+`docker compose -f services/dsh-server/docker-compose.yml restart dsh-server`
++ a redeploy and confirm sessions are still there.
 
 ## Troubleshooting
 
@@ -102,9 +105,9 @@ the phone (Tailscale app + mobile browser), continue it from the computer,
   (`curl -v`). Never loosen the fence.
 - **Volume permissions**: fresh named volumes inherit the image's `node`
   ownership; if a volume predates this image, run
-  `docker compose -f services/dsh/docker-compose.yml run --rm dsh chown -R node:node /data /workspaces`.
+  `docker compose -f services/dsh-server/docker-compose.yml run --rm dsh-server chown -R node:node /data /workspaces`.
 - **Tailscale sidecar restarts**: compose restarts the netns-sharing app with
-  it; if not, `docker compose -f services/dsh/docker-compose.yml restart dsh`.
+  it; if not, `docker compose -f services/dsh-server/docker-compose.yml restart dsh-server`.
 - **Agent needs git push access**: configure git identity/credentials inside
   the container's session env, or mount an SSH key into `dsh-workspaces`.
 - **Telemetry**: disabled via `DSH_TELEMETRY_DISABLED=1` in the image.
@@ -113,7 +116,7 @@ the phone (Tailscale app + mobile browser), continue it from the computer,
 
 Tailnet-only: no funnel, no public nginx route, no host ports. DSH has no auth
 layer — tailnet membership is the access boundary. Keys travel only inside the
-signed webhook and land in `services/dsh/.env` (0600), same as every service.
+signed webhook and land in `services/dsh-server/.env` (0600), same as every service.
 If the tailnet ever grows beyond personal devices: Tailscale ACLs first, then
 a Basic Auth hop in front (transparent to the trust fence since the Host
 header is unchanged).
