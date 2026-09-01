@@ -348,6 +348,30 @@ func TestHandleOnboardSuccess(t *testing.T) {
 	}
 }
 
+func TestHandleOnboardSetsWebhookSecrets(t *testing.T) {
+	gh := &fakeGithub{defaultBranch: "main", files: map[string]bool{"Dockerfile": true}}
+	d := newOnboardDeployer(t, gh)
+	d.cfg.WebhookSecret = "server-webhook-secret"
+	d.cfg.DeployWebhookURL = "https://deploy.example.com/hooks/deploy"
+
+	w, out := onboardRequest(t, d, `{"repo":"alice/web"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("code = %d, body = %s", w.Code, w.Body.String())
+	}
+	if out["webhook_secrets"] != "set" {
+		t.Fatalf("webhook_secrets = %v", out["webhook_secrets"])
+	}
+	if gh.secretValues["DEPLOY_WEBHOOK_URL"] != "https://deploy.example.com/hooks/deploy" {
+		t.Fatalf("webhook url = %q", gh.secretValues["DEPLOY_WEBHOOK_URL"])
+	}
+	if gh.secretValues["DEPLOY_WEBHOOK_SECRET"] != "server-webhook-secret" {
+		t.Fatalf("webhook secret = %q", gh.secretValues["DEPLOY_WEBHOOK_SECRET"])
+	}
+	if gh.secretValues["SERVICE_ENV"] != "{}" {
+		t.Fatalf("service env = %q", gh.secretValues["SERVICE_ENV"])
+	}
+}
+
 func TestHandleOnboardDockerfileWarning(t *testing.T) {
 	gh := &fakeGithub{defaultBranch: "main", files: map[string]bool{}}
 	d := newOnboardDeployer(t, gh)

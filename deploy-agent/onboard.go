@@ -40,15 +40,16 @@ type onboardPRResult struct {
 
 // onboardResults is the structured, idempotent-friendly response.
 type onboardResults struct {
-	Repo       string           `json:"repo"`
-	Service    string           `json:"service"`
-	Image      string           `json:"image"`
-	BaseBranch string           `json:"base_branch"`
-	Secret     string           `json:"secret,omitempty"` // "set" once the SERVICE_ENV secret exists
-	Compose    string           `json:"compose"`          // "created" | "existing"
-	Warnings   []string         `json:"warnings,omitempty"`
-	PR         *onboardPRResult `json:"pr,omitempty"`
-	Error      string           `json:"error,omitempty"`
+	Repo           string           `json:"repo"`
+	Service        string           `json:"service"`
+	Image          string           `json:"image"`
+	BaseBranch     string           `json:"base_branch"`
+	Secret         string           `json:"secret,omitempty"`          // "set" once the SERVICE_ENV secret exists
+	WebhookSecrets string           `json:"webhook_secrets,omitempty"` // "set" once DEPLOY_WEBHOOK_URL/SECRET exist
+	Compose        string           `json:"compose"`                   // "created" | "existing"
+	Warnings       []string         `json:"warnings,omitempty"`
+	PR             *onboardPRResult `json:"pr,omitempty"`
+	Error          string           `json:"error,omitempty"`
 }
 
 var repoRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?/[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$`)
@@ -316,7 +317,9 @@ func (d *deployer) handleOnboard(w http.ResponseWriter, r *http.Request) {
 		res.Warnings = append(res.Warnings, "no Dockerfile found at "+dockerfilePath+" on "+baseBranch+" — the first build will fail until one is added")
 	}
 
-	// 5. SERVICE_ENV secret (repo-level; independent of PR state).
+	// 5. SERVICE_ENV secret (repo-level; independent of PR state), plus the
+	// deploy webhook pair when DEPLOY_WEBHOOK_URL is configured — so every
+	// onboarded repo can notify the agent with zero manual secret setup.
 	envJSON, err := json.Marshal(req.Env)
 	if err != nil {
 		d.failOnboard(w, res, "env_serialize", http.StatusInternalServerError, err)
@@ -327,6 +330,17 @@ func (d *deployer) handleOnboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res.Secret = "set"
+	if d.cfg.DeployWebhookURL != "" {
+		if err := d.gh.setSecret(ctx, owner, repo, "DEPLOY_WEBHOOK_URL", d.cfg.DeployWebhookURL); err != nil {
+			d.failOnboard(w, res, "set_webhook_url", http.StatusBadGateway, err)
+			return
+		}
+		if err := d.gh.setSecret(ctx, owner, repo, "DEPLOY_WEBHOOK_SECRET", d.cfg.WebhookSecret); err != nil {
+			d.failOnboard(w, res, "set_webhook_secret", http.StatusBadGateway, err)
+			return
+		}
+		res.WebhookSecrets = "set"
+	}
 
 	// 6. Open the review PR (never merged by the agent).
 	wd := workflowData{
