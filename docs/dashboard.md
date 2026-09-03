@@ -18,6 +18,36 @@ except `_template`):
 - **Access** — `private` (Tailscale sidecar) or `public`.
 - **Last deploy** — the most recent deployment's status and time.
 
+Each service row has a vertical **⋮ (overflow) menu** on the right. Sign in with
+the admin token (see [Auth](#auth)) to reveal the actions:
+
+- **Start** — `docker compose up -d --remove-orphans` (bring the service up,
+  creating containers if it has never been run, or restarting stopped ones).
+  This is the same bring-up command a webhook deploy uses.
+- **Stop** — `docker compose stop` (gracefully stop the running containers,
+  keeping them so **Start** can bring them back).
+- **Restart** — `docker compose restart` (restart the running containers in
+  place).
+- **Delete** — `docker compose down` then remove `services/<name>/` (see the
+  [API](#api) below).
+
+The menu is hidden until an admin token is set, because every action mutates the
+server. Without an admin token the actions are not shown at all (read-only
+view), and even with the UI shown the agent enforces `ADMIN_TOKEN` on each
+request.
+
+## Running and stopping a service
+
+Use the ⋮ menu on a service row to `start`, `stop`, or `restart` it. This is
+handy for static infra services that a project webhook never deploys (for
+example the `ntfy` service) — you can bring them up without a `git push`, or
+stop them to take them offline temporarily.
+
+Actions are applied with `docker compose` against the service's own compose
+project, so they respect the project's `restart` policy, networks, and volumes.
+The result is echoed in the dashboard banner and the service list is refreshed
+after each action.
+
 ## Adding a service (manual, advanced)
 
 The "Add service (manual — no GitHub workflow)" form is collapsed under the
@@ -58,7 +88,7 @@ first build will fail until one is added). Requires `GITHUB_APP_ID` +
 | Scope | Endpoints | Token |
 |---|---|---|
 | Read | `GET /services`, `GET /deployments`, `GET /deployments/{id}`, `GET /onboard/repos` | `READ_TOKEN` |
-| Write | `POST /services`, `DELETE /services/{name}`, `POST /onboard` | `ADMIN_TOKEN` |
+| Write | `POST /services`, `DELETE /services/{name}`, `POST /services/{name}/start`, `POST /services/{name}/stop`, `POST /services/{name}/restart`, `POST /onboard` | `ADMIN_TOKEN` |
 
 - Both tokens are sent as `Authorization: Bearer <token>` and stored by the
   dashboard in your browser's `localStorage` (entered once via **Settings**).
@@ -95,6 +125,21 @@ curl -X POST https://deploy.<domain>/services \
 # delete a service (admin) — stops/removes containers, deletes services/<name>/
 # on the server; volumes are kept unless ?purge=true (adds `-v` to compose down)
 curl -X DELETE https://deploy.<domain>/services/my-service \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# start / stop / restart a service (admin) — run the service's own compose
+# project (up -d / stop / restart)
+
+# start (up -d --remove-orphans — creates containers if never run)
+curl -X POST https://deploy.<domain>/services/my-service/start \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# stop (graceful stop, containers kept so Start can bring them back)
+curl -X POST https://deploy.<domain>/services/my-service/stop \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# restart (restart running containers in place)
+curl -X POST https://deploy.<domain>/services/my-service/restart \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 
 # onboard a project repo (admin; requires the onboarding GitHub App)
