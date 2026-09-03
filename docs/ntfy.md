@@ -24,10 +24,15 @@ services/ntfy/docker-compose.yml   the ntfy app + Tailscale sidecar + ts-serve c
 services/ntfy/.env.example         template for services/ntfy/.env (manual)
 ```
 
-The compose is a standard per-app service (copied from `_template`): the `ntfy`
-app and a `tailscale` sidecar on the shared `proxy` network. The sidecar
-registers as `ntfy` in MagicDNS, terminates HTTPS on tailnet `:443`, and proxies
-`/` to `http://ntfy:80`. No host port, no public route.
+The compose is a standard per-app service (copied from `_template`): the
+`ntfy-app` container and a `tailscale` sidecar on the shared `proxy` network.
+The sidecar registers as `ntfy` in MagicDNS, terminates HTTPS on tailnet `:443`,
+and proxies `/` to `http://ntfy-app:80`. No host port, no public route.
+
+> The app service is deliberately named `ntfy-app` (not `ntfy`): the sidecar's
+> `hostname: ntfy` is registered by Docker's embedded DNS, and naming the app
+> `ntfy` would shadow it — `http://ntfy:80` would resolve to the sidecar itself
+> and fail with 502.
 
 ## Prerequisites
 
