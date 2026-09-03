@@ -69,6 +69,7 @@ docs/                setup, architecture, adding-a-service, hooks, logs, securit
 - [Deployment logs](docs/deployment-logs.md) — history API + log schema
 - [Dashboard](docs/dashboard.md) — view services/versions + add services
 - [dsh (DeepSeek Harness)](docs/dsh.md) — self-hosted coding-agent web UI, accessed from phone + computer over Tailscale
+- [ntfy](docs/ntfy.md) — self-hosted push notifications (dsh-notify delivery, optional deploy notifications)
 - [Tailscale access](docs/tailscale.md) — private access for personal-data apps
 - [Security](docs/security.md) — threat model
 - [Architecture](docs/architecture.md) — how it fits together
