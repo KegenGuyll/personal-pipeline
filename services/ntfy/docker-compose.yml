@@ -21,7 +21,13 @@
 # bearer token (NTFY_TOKEN).
 
 services:
-  ntfy:
+  # Service name is `ntfy-app` (NOT `ntfy`) deliberately: the Tailscale sidecar
+  # below sets `hostname: ntfy` so its MagicDNS name is ntfy.<tailnet>.ts.net,
+  # and Docker's embedded DNS registers that hostname. If the app service were
+  # also named `ntfy`, that hostname would shadow it and `http://ntfy:80` would
+  # resolve to the SIDECAR (port 80 not listening) -> 502. Keeping the app name
+  # distinct avoids the collision; the proxy target below uses `ntfy-app`.
+  ntfy-app:
     image: binwiederhier/ntfy:latest
     # The image's default command does NOT start the server (bare `ntfy` prints
     # help). `serve` is required; config comes from the NTFY_* env vars in .env
@@ -61,7 +67,7 @@ services:
     networks:
       - proxy
     depends_on:
-      - ntfy
+      - ntfy-app
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:41234/healthz"]
       interval: 1m
@@ -75,7 +81,7 @@ configs:
   ts-serve:
     content: |
       {"TCP":{"443":{"HTTPS":true}},
-       "Web":{"$${TS_CERT_DOMAIN}:443":{"Handlers":{"/":{"Proxy":"http://ntfy:80"}}}},
+       "Web":{"$${TS_CERT_DOMAIN}:443":{"Handlers":{"/":{"Proxy":"http://ntfy-app:80"}}}},
        "AllowFunnel":{"$${TS_CERT_DOMAIN}:443":false}}
 
 networks:
