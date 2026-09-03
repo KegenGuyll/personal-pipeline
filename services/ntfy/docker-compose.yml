@@ -23,6 +23,11 @@
 services:
   ntfy:
     image: binwiederhier/ntfy:latest
+    # The image's default command does NOT start the server (bare `ntfy` prints
+    # help). `serve` is required; config comes from the NTFY_* env vars in .env
+    # (NTFY_BASE_URL / NTFY_BEHIND_PROXY / NTFY_LISTEN). It listens on :80 by
+    # default, which is what the sidecar proxies to.
+    command: serve
     restart: unless-stopped
     env_file: .env
     networks:
