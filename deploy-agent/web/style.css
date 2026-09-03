@@ -32,7 +32,7 @@ h1 { margin: 0; font-size: 1.4rem; }
 h2 { font-size: 1.05rem; margin: 28px 0 12px; }
 .subtitle { margin: 2px 0 0; color: var(--muted); font-size: 0.85rem; }
 
-section { padding: 0 28px; max-width: 1000px; }
+section { padding: 0 28px; }
 .section-head { display: flex; align-items: center; justify-content: space-between; }
 .section-head h2 { margin-bottom: 12px; }
 
@@ -41,6 +41,7 @@ section { padding: 0 28px; max-width: 1000px; }
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 16px;
+  width: 100%;
 }
 
 button {
@@ -60,6 +61,46 @@ button.ghost {
 button:hover { filter: brightness(1.1); }
 button.danger { color: var(--bad); border-color: rgba(239, 107, 107, 0.4); }
 button.danger:hover { background: rgba(239, 107, 107, 0.12); }
+
+/* Service action overflow (⋮) menu */
+.menu-cell { position: relative; text-align: right; white-space: nowrap; }
+.svc-menu { position: relative; display: inline-block; }
+button.menu-toggle {
+  padding: 4px 9px;
+  font-size: 1.05rem;
+  line-height: 1;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+button.menu-toggle:hover { color: var(--text); }
+.menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  min-width: 150px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text);
+  text-align: left;
+  font-size: 0.86rem;
+  white-space: nowrap;
+}
+.menu-item:hover { background: rgba(91, 140, 255, 0.15); }
+.menu-item.danger { color: var(--bad); }
+.menu-item.danger:hover { background: rgba(239, 107, 107, 0.12); }
+.menu-sep { height: 1px; margin: 4px 2px; background: var(--border); }
 
 table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); }

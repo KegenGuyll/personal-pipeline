@@ -106,8 +106,17 @@ function render(services) {
       last = `${statusBadge(ld.status)} <span class="muted">${esc(formatTime(ld.ts))}</span>`;
     }
 
-    const del = getToken(LS_ADMIN)
-      ? `<button type="button" class="ghost danger" data-delete="${esc(svc.name)}" title="Stop and remove this service (server-side)">Delete</button>`
+    const menu = getToken(LS_ADMIN)
+      ? `<div class="svc-menu">
+          <button type="button" class="ghost menu-toggle" title="Service actions" aria-haspopup="menu" aria-expanded="false">⋮</button>
+          <div class="menu" hidden role="menu">
+            <button type="button" class="menu-item" data-action="start" data-service="${esc(svc.name)}">Start</button>
+            <button type="button" class="menu-item" data-action="stop" data-service="${esc(svc.name)}">Stop</button>
+            <button type="button" class="menu-item" data-action="restart" data-service="${esc(svc.name)}">Restart</button>
+            <div class="menu-sep"></div>
+            <button type="button" class="menu-item danger" data-action="delete" data-service="${esc(svc.name)}">Delete</button>
+          </div>
+        </div>`
       : "";
 
     tr.innerHTML = `
@@ -116,10 +125,73 @@ function render(services) {
       <td class="mono muted">${esc(svc.image || "—")}</td>
       <td>${access}</td>
       <td>${last}</td>
-      <td>${del}</td>`;
+      <td class="menu-cell">${menu}</td>`;
     body.appendChild(tr);
   }
 }
+
+// closeMenus closes every open service action dropdown.
+function closeMenus() {
+  document.querySelectorAll(".svc-menu .menu").forEach((m) => {
+    m.hidden = true;
+    const toggle = m.parentElement.querySelector(".menu-toggle");
+    if (toggle) toggle.setAttribute("aria-expanded", "false");
+  });
+}
+
+// runServiceAction dispatches a start/stop/restart request to the agent, or
+// routes the delete action through the existing confirmation flow.
+async function runServiceAction(name, action) {
+  if (action === "delete") {
+    return deleteService(name);
+  }
+  const adminToken = getToken(LS_ADMIN);
+  const { status, data } = await api(`/services/${encodeURIComponent(name)}/${action}`, {
+    method: "POST", token: adminToken,
+  });
+  if (status === 200) {
+    const verb = { start: "Started", stop: "Stopped", restart: "Restarted" }[action] || action;
+    showBanner(verb + " " + name + ".");
+    await loadServices();
+    return;
+  }
+  if (status === 401) {
+    showBanner("Unauthorized — open Settings and enter the correct admin token.");
+    openSettings();
+    return;
+  }
+  if (status === 404) {
+    showBanner("Service actions are disabled — set ADMIN_TOKEN on the server.");
+    return;
+  }
+  showBanner("Action failed (" + status + "): " + (data && data.error ? data.error : ""));
+}
+
+$("#services-body").addEventListener("click", (e) => {
+  const toggle = e.target.closest(".menu-toggle");
+  if (toggle) {
+    e.stopPropagation();
+    const item = toggle.parentElement.querySelector(".menu");
+    const wasOpen = !item.hidden;
+    closeMenus();
+    if (!wasOpen) {
+      item.hidden = false;
+      toggle.setAttribute("aria-expanded", "true");
+    }
+    return;
+  }
+  const action = e.target.closest(".menu-item");
+  if (action) {
+    e.stopPropagation();
+    closeMenus();
+    runServiceAction(action.dataset.service, action.dataset.action);
+  }
+});
+
+// Clicking anywhere outside a service menu closes it.
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".svc-menu")) closeMenus();
+});
 
 async function deleteService(name) {
   if (!confirm(`Delete service "${name}"?\n\nStops and removes its containers (docker compose down) and deletes services/${name}/ on the server. Volumes are kept. This is server-side only — the repo's workflow is untouched.`)) {
@@ -144,11 +216,6 @@ async function deleteService(name) {
   }
   showBanner("Delete failed (" + status + "): " + (data && data.error ? data.error : ""));
 }
-
-$("#services-body").addEventListener("click", (e) => {
-  const btn = e.target.closest("[data-delete]");
-  if (btn) deleteService(btn.dataset.delete);
-});
 
 async function loadServices() {
   hideBanner();
