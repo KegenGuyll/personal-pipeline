@@ -24,6 +24,12 @@ func runHook(script, dir string, env map[string]string, timeout time.Duration) H
 	cmd := exec.CommandContext(ctx, "sh", script)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), mapToEnv(env)...)
+	// Own process group + group kill at the deadline: the default
+	// cancellation kills only `sh`, so a foreground child (sleep, a docker
+	// command) would hold the output pipes and run past HOOK_TIMEOUT — and a
+	// backgrounded docker child would outlive the hook entirely, reopening
+	// the hook/prune race the docker gate closes.
+	groupKillCmd(cmd)
 	out, err := cmd.CombinedOutput()
 
 	res := HookResult{

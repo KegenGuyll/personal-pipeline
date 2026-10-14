@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -34,27 +33,14 @@ func runCompose(cfg *Config, dir, project string, args ...string) (string, error
 
 // runDocker runs one docker command with a hard cap: the command (and any
 // children it spawns) runs in its own process group and the whole group is
-// SIGKILLed at the deadline, so a hung command can't hold dockerMu — and the
-// webhook HTTP response — forever. cmd.Cancel is invoked by os/exec only
-// while the command may still be alive (never after a successful Wait), so
-// the group kill can't land on a reused pid's group.
+// SIGKILLed at the deadline (see groupKillCmd), so a hung command can't hold
+// dockerMu — and the webhook HTTP response — forever.
 func runDocker(cfg *Config, timeout time.Duration, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Env = dockerEnv(cfg)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return os.ErrProcessDone
-		}
-		// Reject the already-completed case so the group kill can't land on
-		// a reused pid (Process.Signal(0) fails once the process is gone).
-		if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
-			return os.ErrProcessDone
-		}
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	}
+	groupKillCmd(cmd)
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf

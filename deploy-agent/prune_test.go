@@ -290,6 +290,30 @@ func TestRunComposeTimesOut(t *testing.T) {
 	}
 }
 
+// TestHookTimeoutKillsChildren: a hook that spawns children (backgrounded or
+// foreground) must be fully dead at the deadline — the output pipes close and
+// runHook returns — so the docker gate never releases while hook-spawned
+// docker work (a backgrounded docker pull) can still be running.
+func TestHookTimeoutKillsChildren(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "hook.sh")
+	// A single-process kill would leave the backgrounded `sleep 30` running
+	// while the foreground one holds the output pipes; both are in the
+	// hook's process group, so the group kill takes out both.
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 30 &\nsleep 30\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	res := runHook(script, dir, nil, 100*time.Millisecond)
+	if res.Err == nil {
+		t.Fatal("expected timeout")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("runHook returned after %s — hook children outlived the timeout", elapsed)
+	}
+}
+
 func TestLoadConfigImagePrune(t *testing.T) {
 	// Unset falls back to the default (skip if the sandbox has it set).
 	if os.Getenv("IMAGE_PRUNE") == "" {
