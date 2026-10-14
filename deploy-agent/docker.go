@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
+	"time"
 )
 
 // dockerEnv points the docker CLI at a writable DOCKER_CONFIG under the data
@@ -58,13 +62,39 @@ func imagePruneArgs(setting string) []string {
 	return args
 }
 
+// pruneTimeout caps a single prune run: a hung or enormous prune would hold
+// dockerMu — stalling every deploy, not just its own project — and the
+// webhook HTTP response indefinitely. var so tests can shorten it.
+var pruneTimeout = 5 * time.Minute
+
 // pruneImages removes images no container is using (old SHA tags left behind
 // by previous deploys), returning the full command output.
 func (d *deployer) pruneImages() (string, error) {
-	cmd := exec.Command("docker", imagePruneArgs(d.cfg.ImagePrune)...)
+	ctx, cancel := context.WithTimeout(context.Background(), pruneTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", imagePruneArgs(d.cfg.ImagePrune)...)
 	cmd.Env = dockerEnv(d.cfg)
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	// Own process group + group-kill at the deadline: CommandContext only
+	// signals the direct child, and the wait blocks until the output pipes
+	// close — orphaned children holding them (a CLI helper the docker command
+	// spawned) would otherwise outlive the kill and hang the prune.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+	go func() {
+		<-ctx.Done()
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}()
+	err := cmd.Wait()
+	out := buf.String()
+	if ctx.Err() == context.DeadlineExceeded {
+		return out, fmt.Errorf("prune timed out after %s", pruneTimeout)
+	}
+	return out, err
 }
 
 // The image-prune CLI prints a "Deleted Images:" header with lowercase

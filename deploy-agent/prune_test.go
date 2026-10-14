@@ -3,7 +3,9 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestImagePruneArgs(t *testing.T) {
@@ -126,6 +128,32 @@ func TestAutoPruneWarning(t *testing.T) {
 	}
 	if res.Error == "" {
 		t.Fatal("expected error captured in result")
+	}
+}
+
+// TestAutoPruneTimesOut ensures a hung prune is killed instead of holding
+// dockerMu (and the webhook response) forever.
+func TestAutoPruneTimesOut(t *testing.T) {
+	d := newTestDeployer(t)
+	d.cfg.ImagePrune = "all"
+
+	bin := t.TempDir()
+	script := "#!/bin/sh\nsleep 30\n"
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	old := pruneTimeout
+	pruneTimeout = 50 * time.Millisecond
+	defer func() { pruneTimeout = old }()
+
+	res := d.autoPrune("web")
+	if res == nil {
+		t.Fatal("expected a result")
+	}
+	if res.Error == "" || !strings.Contains(res.Error, "timed out") {
+		t.Fatalf("expected timeout error, got %q", res.Error)
 	}
 }
 
