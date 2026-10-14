@@ -72,20 +72,14 @@ func TestAutoPruneRunsDocker(t *testing.T) {
 	d.cfg.ImagePrune = "all"
 
 	argsLog := filepath.Join(t.TempDir(), "args")
-	bin := t.TempDir()
-	script := `#!/bin/sh
-printf '%s\n' "$*" >> "$FAKE_ARGS_LOG"
+	t.Setenv("FAKE_ARGS_LOG", argsLog)
+	fakeDockerPath(t, `printf '%s\n' "$*" >> "$FAKE_ARGS_LOG"
 echo "Deleted Images:"
 echo "untagged: ghcr.io/you/web@sha256:aaa"
 echo "deleted: sha256:aaa"
 echo "deleted: sha256:bbb"
 echo "Total reclaimed space: 1.234GB"
-`
-	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("FAKE_ARGS_LOG", argsLog)
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+`)
 
 	res := d.autoPrune("web")
 	if res == nil {
@@ -115,12 +109,7 @@ func TestAutoPruneWarning(t *testing.T) {
 	d := newTestDeployer(t)
 	d.cfg.ImagePrune = "24h"
 
-	bin := t.TempDir()
-	script := "#!/bin/sh\necho boom >&2\nexit 1\n"
-	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	fakeDockerPath(t, "echo boom >&2\nexit 1\n")
 
 	res := d.autoPrune("web")
 	if res == nil {
@@ -137,12 +126,7 @@ func TestAutoPruneTimesOut(t *testing.T) {
 	d := newTestDeployer(t)
 	d.cfg.ImagePrune = "all"
 
-	bin := t.TempDir()
-	script := "#!/bin/sh\nsleep 30\n"
-	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	fakeDockerPath(t, "sleep 30\n")
 
 	old := pruneTimeout
 	pruneTimeout = 50 * time.Millisecond
@@ -154,6 +138,103 @@ func TestAutoPruneTimesOut(t *testing.T) {
 	}
 	if res.Error == "" || !strings.Contains(res.Error, "timed out") {
 		t.Fatalf("expected timeout error, got %q", res.Error)
+	}
+}
+
+// fakeDockerPath prepends a fake `docker` (built from script) to PATH for the
+// test and returns the bin dir.
+func fakeDockerPath(t *testing.T, script string) string {
+	t.Helper()
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\n"+script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return bin
+}
+
+// TestDoDeployPruneSuccess runs doDeploy end-to-end against a fake docker:
+// compose pull/up succeed, image prune succeeds, the record keeps status
+// success with the prune result, and the history entry carries it.
+func TestDoDeployPruneSuccess(t *testing.T) {
+	d := newTestDeployer(t)
+	d.cfg.ImagePrune = "all"
+	fakeDockerPath(t, `case "$1" in
+  compose) echo "compose ok: $*";;
+  image)   echo "Deleted Images:"; echo "deleted: sha256:aaa"; echo "Total reclaimed space: 0B";;
+esac
+`)
+
+	rec, err := d.doDeploy(&DeployRequest{Project: "web", Image: "ghcr.io/alice/web", Tag: "sha-1"})
+	if err != nil {
+		t.Fatalf("deploy failed: %v", err)
+	}
+	if rec.Status != "success" {
+		t.Fatalf("status = %q, want success", rec.Status)
+	}
+	if rec.Prune == nil {
+		t.Fatal("expected prune recorded")
+	}
+	if rec.Prune.Deleted != 1 || rec.Prune.Reclaimed != "0B" || rec.Prune.Error != "" {
+		t.Fatalf("prune = %+v", rec.Prune)
+	}
+
+	recs, err := d.hist.List("web", "success", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 || recs[0].Prune == nil || recs[0].Prune.Deleted != 1 {
+		t.Fatalf("history record = %+v", recs)
+	}
+}
+
+// TestDoDeployPruneFailureKeepsSuccess pins the contract Copilot's first
+// review hinged on: a failing prune is recorded (with its error) and turned
+// into a warning, but the deploy itself stays successful.
+func TestDoDeployPruneFailureKeepsSuccess(t *testing.T) {
+	d := newTestDeployer(t)
+	d.cfg.ImagePrune = "all"
+	fakeDockerPath(t, `case "$1" in
+  compose) echo "compose ok: $*";;
+  image)   echo boom >&2; exit 1;;
+esac
+`)
+
+	rec, err := d.doDeploy(&DeployRequest{Project: "web", Image: "ghcr.io/alice/web", Tag: "sha-1"})
+	if err != nil {
+		t.Fatalf("prune failure must not fail the deploy: %v", err)
+	}
+	if rec.Status != "success" || rec.Error != "" {
+		t.Fatalf("status = %q error = %q, want success/empty", rec.Status, rec.Error)
+	}
+	if rec.Prune == nil || rec.Prune.Error == "" {
+		t.Fatalf("expected prune error recorded, got %+v", rec.Prune)
+	}
+
+	recs, err := d.hist.List("web", "success", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 || recs[0].Prune == nil || recs[0].Prune.Error == "" {
+		t.Fatalf("history record = %+v", recs)
+	}
+}
+
+// TestAutoPruneSkipsWhileHooksActive: a hook's pulled images sit outside
+// dockerMu's protection, so the prune skips and the next deploy catches up.
+func TestAutoPruneSkipsWhileHooksActive(t *testing.T) {
+	d := newTestDeployer(t)
+	d.cfg.ImagePrune = "all"
+	fakeDockerPath(t, `echo "deleted: sha256:aaa"`)
+
+	d.hookBusy.Store(1)
+	if got := d.autoPrune("web"); got != nil {
+		t.Fatalf("expected skip (nil), got %+v", got)
+	}
+
+	d.hookBusy.Store(0)
+	if got := d.autoPrune("web"); got == nil {
+		t.Fatal("expected prune to run once hooks are done")
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -45,6 +46,14 @@ type deployer struct {
 	// pulled image is not yet referenced by a container and would look
 	// unused. The per-project locks below don't cover that.
 	dockerMu sync.Mutex
+
+	// hookBusy counts in-flight deploy hooks: a hook may run docker commands
+	// (custom hooks commonly do), and the images it pulls sit outside
+	// dockerMu's protection. Prune skips while any hook is active and catches
+	// up on the next deploy — skipping keeps the coordination deadlock-free
+	// (serializing hooks INTO dockerMu would hang a hook that calls back into
+	// this agent's docker-touching endpoints).
+	hookBusy atomic.Int64
 
 	loginMu   sync.Mutex
 	loginDone bool
@@ -179,7 +188,7 @@ func (d *deployer) doDeploy(req *DeployRequest) (DeployRecord, error) {
 	notify("deploy.started", "started", "")
 
 	if hookPath, ok := hookExists(dir, "pre-deploy"); ok {
-		res := runHook(hookPath, dir, hookEnv(req, "started", "", 0), d.cfg.HookTimeout)
+		res := d.runHookTracked(hookPath, dir, hookEnv(req, "started", "", 0))
 		rec.PreHook = &HookResult{ExitCode: res.ExitCode, OutputTail: res.OutputTail, DurationMs: res.DurationMs}
 		if res.Err != nil {
 			return fail(fmt.Errorf("pre-deploy hook failed: %w", res.Err))
@@ -231,7 +240,7 @@ func (d *deployer) doDeploy(req *DeployRequest) (DeployRecord, error) {
 		}
 	}
 	if hookPath, ok := hookExists(dir, "post-deploy"); ok {
-		res := runHook(hookPath, dir, hookEnv(req, "success", "", time.Since(start).Milliseconds()), d.cfg.HookTimeout)
+		res := d.runHookTracked(hookPath, dir, hookEnv(req, "success", "", time.Since(start).Milliseconds()))
 		rec.PostHook = &HookResult{ExitCode: res.ExitCode, OutputTail: res.OutputTail, DurationMs: res.DurationMs}
 		if res.Err != nil {
 			logEvent("hook.warning", map[string]any{"project": req.Project, "hook": "post-deploy", "error": res.Err.Error()})
@@ -311,12 +320,27 @@ func (d *deployer) handleGetDeployment(w http.ResponseWriter, r *http.Request) {
 
 // ---- helpers ----
 
+// runHookTracked runs a deploy hook and tracks it as docker-capable activity
+// (hooks may pull images via docker commands) so a concurrent prune skips
+// instead of racing the hook's images.
+func (d *deployer) runHookTracked(script, dir string, env map[string]string) HookResult {
+	d.hookBusy.Add(1)
+	defer d.hookBusy.Add(-1)
+	return runHook(script, dir, env, d.cfg.HookTimeout)
+}
+
 // autoPrune removes old images no container uses after a successful deploy.
 // Disabled when cfg.ImagePrune is empty; best-effort — a prune failure is
 // logged and surfaced via the returned result, it never flips the deploy to
-// failed. The caller must hold d.dockerMu.
+// failed. Skips while deploy hooks are active (their images sit outside
+// dockerMu's protection; the next successful deploy prunes instead). The
+// caller must hold d.dockerMu.
 func (d *deployer) autoPrune(project string) *PruneResult {
 	if d.cfg.ImagePrune == "" {
+		return nil
+	}
+	if n := d.hookBusy.Load(); n > 0 {
+		logEvent("prune.skipped", map[string]any{"project": project, "reason": "hooks_active"})
 		return nil
 	}
 	start := time.Now()
