@@ -207,6 +207,18 @@ func (d *deployer) doDeploy(req *DeployRequest) (DeployRecord, error) {
 		}
 	}
 
+	// The deploy is live: reclaim disk by pruning images no container uses
+	// (previous SHA tags). Best-effort — a prune failure only adds a warning.
+	if prune := d.autoPrune(req.Project); prune != nil {
+		rec.Prune = prune
+		if prune.Error != "" {
+			if warning != "" {
+				warning += "; "
+			}
+			warning += "image prune failed: " + prune.Error
+		}
+	}
+
 	rec.DurationMs = time.Since(start).Milliseconds()
 	notify("deploy.succeeded", "success", warning)
 	d.record(rec)
@@ -277,6 +289,32 @@ func (d *deployer) handleGetDeployment(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---- helpers ----
+
+// autoPrune removes old images no container uses after a successful deploy.
+// Disabled when cfg.ImagePrune is empty; best-effort — a prune failure is
+// logged and surfaced via the returned result, it never flips the deploy to
+// failed.
+func (d *deployer) autoPrune(project string) *PruneResult {
+	if d.cfg.ImagePrune == "" {
+		return nil
+	}
+	start := time.Now()
+	out, err := d.pruneImages()
+	res := &PruneResult{
+		OutputTail: tail(out, 4000),
+		DurationMs: time.Since(start).Milliseconds(),
+	}
+	res.Pruned, res.Reclaimed = parsePruneOutput(out)
+	if err != nil {
+		res.Error = fmt.Sprintf("%v: %s", err, tail(out, 500))
+		logEvent("prune.failed", map[string]any{"project": project, "error": res.Error})
+		return res
+	}
+	logEvent("prune.succeeded", map[string]any{
+		"project": project, "pruned": res.Pruned, "reclaimed": res.Reclaimed, "duration_ms": res.DurationMs,
+	})
+	return res
+}
 
 func verifySignature(secret string, body []byte, header string) bool {
 	const prefix = "sha256="

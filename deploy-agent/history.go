@@ -16,6 +16,16 @@ type ComposeResult struct {
 	UpOutputTail   string `json:"up_output_tail,omitempty"`
 }
 
+// PruneResult captures the outcome of the automatic image cleanup step that
+// runs after a successful deploy (see ImagePrune in config.go).
+type PruneResult struct {
+	Pruned     int    `json:"pruned"`
+	Reclaimed  string `json:"reclaimed,omitempty"`
+	OutputTail string `json:"output_tail,omitempty"`
+	DurationMs int64  `json:"duration_ms"`
+	Error      string `json:"error,omitempty"`
+}
+
 // DeployRecord is one append-only deployment-history entry. The `env` map is
 // deliberately absent — secrets are never written to history.
 type DeployRecord struct {
@@ -31,6 +41,7 @@ type DeployRecord struct {
 	PreHook       *HookResult    `json:"pre_hook,omitempty"`
 	PostHook      *HookResult    `json:"post_hook,omitempty"`
 	Compose       *ComposeResult `json:"compose,omitempty"`
+	Prune         *PruneResult   `json:"prune,omitempty"`
 	Notifications []string       `json:"notifications,omitempty"`
 	Error         string         `json:"error,omitempty"`
 }

@@ -34,6 +34,9 @@ on your server to pull and run it → apps are served privately via Tailscale
   Serve, no public exposure.
 - **Deployment history** — append-only JSONL + a bearer-authenticated `GET /deployments`
   read API + live structured `docker logs`.
+- **Automatic image cleanup** — after every successful deploy the agent prunes
+  images no container uses (the old SHA tags), so the server disk doesn't fill
+  with stale images (`IMAGE_PRUNE`, default: keep the last 24h).
 - **Web dashboard** — a small UI served by the agent at `/ui` to view every service
   and the version it's running, and to add services to the deployment allowlist
   from the browser (see [docs/dashboard.md](docs/dashboard.md)).
