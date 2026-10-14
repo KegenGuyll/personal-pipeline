@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -62,6 +63,61 @@ func imagePruneArgs(setting string) []string {
 	return args
 }
 
+// dockerGate makes image pruning and deploy hooks mutually exclusive no
+// matter which starts first. Hooks may run docker commands (custom hooks
+// commonly pull images via `docker run`) but sit outside dockerMu — the
+// deploy's pull→up→prune section — so a running prune could otherwise delete
+// an image a hook just pulled. First one in wins: prune skips when hooks are
+// active (pruning is best-effort and catches up on the next successful
+// deploy), and hooks wait while a prune runs (bounded by pruneTimeout, so
+// the wait cannot hang). It coordinates only this agent's operations —
+// external docker clients (e.g. host-side compose runs during a stack
+// rollout) can't acquire a process-local lock; the daemon itself protects
+// images referenced by containers, and a pruned-then-repulled image
+// self-heals on the next command.
+type dockerGate struct {
+	mu      sync.Mutex
+	hooks   int
+	pruning bool
+}
+
+// hookBegin blocks while a prune is running, then registers the hook.
+func (g *dockerGate) hookBegin() {
+	for {
+		g.mu.Lock()
+		if !g.pruning {
+			g.hooks++
+			g.mu.Unlock()
+			return
+		}
+		g.mu.Unlock()
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func (g *dockerGate) hookEnd() {
+	g.mu.Lock()
+	g.hooks--
+	g.mu.Unlock()
+}
+
+// pruneBegin admits the prune: false => hooks are active, skip this round.
+func (g *dockerGate) pruneBegin() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.hooks > 0 {
+		return false
+	}
+	g.pruning = true
+	return true
+}
+
+func (g *dockerGate) pruneEnd() {
+	g.mu.Lock()
+	g.pruning = false
+	g.mu.Unlock()
+}
+
 // pruneTimeout caps a single prune run: a hung or enormous prune would hold
 // dockerMu — stalling every deploy, not just its own project — and the
 // webhook HTTP response indefinitely. var so tests can shorten it.
@@ -74,22 +130,29 @@ func (d *deployer) pruneImages() (string, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "docker", imagePruneArgs(d.cfg.ImagePrune)...)
 	cmd.Env = dockerEnv(d.cfg)
-	// Own process group + group-kill at the deadline: CommandContext only
-	// signals the direct child, and the wait blocks until the output pipes
-	// close — orphaned children holding them (a CLI helper the docker command
-	// spawned) would otherwise outlive the kill and hang the prune.
+	// Own process group, and kill the whole group on timeout: CommandContext
+	// signals only the direct child, while the wait blocks until the output
+	// pipes close — orphaned children spawned by the killed command (a CLI
+	// credential helper or plugin) would otherwise outlive the kill and hang
+	// the prune. cmd.Cancel runs only while the command may still be alive
+	// (never after a successful Wait), so the group kill can't land on a
+	// reused pid's group.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return os.ErrProcessDone
+		}
+		// Reject the already-completed case so the group kill can't land on
+		// a reused pid (Process.Signal(0) fails once the process is gone).
+		if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+			return os.ErrProcessDone
+		}
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
-	if err := cmd.Start(); err != nil {
-		return "", err
-	}
-	go func() {
-		<-ctx.Done()
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	}()
-	err := cmd.Wait()
+	err := cmd.Run()
 	out := buf.String()
 	if ctx.Err() == context.DeadlineExceeded {
 		return out, fmt.Errorf("prune timed out after %s", pruneTimeout)

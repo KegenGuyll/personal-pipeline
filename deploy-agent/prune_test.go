@@ -221,20 +221,57 @@ esac
 }
 
 // TestAutoPruneSkipsWhileHooksActive: a hook's pulled images sit outside
-// dockerMu's protection, so the prune skips and the next deploy catches up.
+// dockerMu's protection, so the prune is refused admission and the next
+// deploy catches up.
 func TestAutoPruneSkipsWhileHooksActive(t *testing.T) {
 	d := newTestDeployer(t)
 	d.cfg.ImagePrune = "all"
 	fakeDockerPath(t, `echo "deleted: sha256:aaa"`)
 
-	d.hookBusy.Store(1)
+	d.gate.hookBegin()
 	if got := d.autoPrune("web"); got != nil {
 		t.Fatalf("expected skip (nil), got %+v", got)
 	}
 
-	d.hookBusy.Store(0)
+	d.gate.hookEnd()
 	if got := d.autoPrune("web"); got == nil {
 		t.Fatal("expected prune to run once hooks are done")
+	}
+}
+
+// TestRunHookTrackedWaitsForPrune pins the other half of the gate: a hook
+// admitted after a prune started waits (bounded by the prune's timeout cap)
+// instead of running docker commands inside the prune's window.
+func TestRunHookTrackedWaitsForPrune(t *testing.T) {
+	d := newTestDeployer(t)
+	script := filepath.Join(t.TempDir(), "post-deploy")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho hook-ran\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if !d.gate.pruneBegin() {
+		t.Fatal("expected prune admission with no hooks active")
+	}
+	done := make(chan HookResult, 1)
+	go func() { done <- d.runHookTracked(script, t.TempDir(), nil) }()
+
+	select {
+	case <-done:
+		t.Fatal("hook ran while prune active — it must wait")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	d.gate.pruneEnd()
+	select {
+	case res := <-done:
+		if res.Err != nil {
+			t.Fatalf("hook error: %v", res.Err)
+		}
+		if !strings.Contains(res.OutputTail, "hook-ran") {
+			t.Fatalf("hook output = %q", res.OutputTail)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("hook never ran after the prune ended")
 	}
 }
 

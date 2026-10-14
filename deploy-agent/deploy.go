@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -47,13 +46,12 @@ type deployer struct {
 	// unused. The per-project locks below don't cover that.
 	dockerMu sync.Mutex
 
-	// hookBusy counts in-flight deploy hooks: a hook may run docker commands
-	// (custom hooks commonly do), and the images it pulls sit outside
-	// dockerMu's protection. Prune skips while any hook is active and catches
-	// up on the next deploy — skipping keeps the coordination deadlock-free
-	// (serializing hooks INTO dockerMu would hang a hook that calls back into
-	// this agent's docker-touching endpoints).
-	hookBusy atomic.Int64
+	// gate makes deploy hooks and image pruning mutually exclusive regardless
+	// of which starts first — see dockerGate in docker.go. Hooks must not
+	// serialize INTO dockerMu: a hook that calls back into this agent's
+	// docker-touching endpoints (e.g. POST /services/{name}/start) would hold
+	// the lock while waiting on a handler that needs it.
+	gate dockerGate
 
 	loginMu   sync.Mutex
 	loginDone bool
@@ -320,29 +318,30 @@ func (d *deployer) handleGetDeployment(w http.ResponseWriter, r *http.Request) {
 
 // ---- helpers ----
 
-// runHookTracked runs a deploy hook and tracks it as docker-capable activity
-// (hooks may pull images via docker commands) so a concurrent prune skips
-// instead of racing the hook's images.
+// runHookTracked runs a deploy hook through the docker gate, so a running
+// prune waits it out (bounded by pruneTimeout) instead of racing the images
+// the hook may pull.
 func (d *deployer) runHookTracked(script, dir string, env map[string]string) HookResult {
-	d.hookBusy.Add(1)
-	defer d.hookBusy.Add(-1)
+	d.gate.hookBegin()
+	defer d.gate.hookEnd()
 	return runHook(script, dir, env, d.cfg.HookTimeout)
 }
 
 // autoPrune removes old images no container uses after a successful deploy.
 // Disabled when cfg.ImagePrune is empty; best-effort — a prune failure is
 // logged and surfaced via the returned result, it never flips the deploy to
-// failed. Skips while deploy hooks are active (their images sit outside
-// dockerMu's protection; the next successful deploy prunes instead). The
-// caller must hold d.dockerMu.
+// failed. Skips when deploy hooks are active (the gate rejects admission;
+// the next successful deploy prunes instead). The caller must hold
+// d.dockerMu.
 func (d *deployer) autoPrune(project string) *PruneResult {
 	if d.cfg.ImagePrune == "" {
 		return nil
 	}
-	if n := d.hookBusy.Load(); n > 0 {
+	if !d.gate.pruneBegin() {
 		logEvent("prune.skipped", map[string]any{"project": project, "reason": "hooks_active"})
 		return nil
 	}
+	defer d.gate.pruneEnd()
 	start := time.Now()
 	out, err := d.pruneImages()
 	res := &PruneResult{
