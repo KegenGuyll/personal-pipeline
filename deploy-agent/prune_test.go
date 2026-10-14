@@ -29,22 +29,30 @@ func TestImagePruneArgs(t *testing.T) {
 }
 
 func TestParsePruneOutput(t *testing.T) {
-	out := `Deleted: sha256:aaa
-Deleted: sha256:bbb
+	// Real CLI shape: "Deleted Images:" header, lowercase "untagged:" /
+	// "deleted:" lines (one per image AND shared parent layer), then the
+	// reclaimed total. Untagged lines must not be counted.
+	out := `Deleted Images:
+untagged: ghcr.io/you/my-service@sha256:aaa
+deleted: sha256:aaa
+deleted: sha256:bbb
+deleted: sha256:ccc
+untagged: ghcr.io/you/other@sha256:ddd
+Deleted: sha256:ddd
 
 Total reclaimed space: 1.234GB
 `
-	pruned, reclaimed := parsePruneOutput(out)
-	if pruned != 2 {
-		t.Fatalf("pruned = %d, want 2", pruned)
+	deleted, reclaimed := parsePruneOutput(out)
+	if deleted != 4 {
+		t.Fatalf("deleted = %d, want 4 (3 lowercase + 1 capitalized; untagged excluded)", deleted)
 	}
 	if reclaimed != "1.234GB" {
 		t.Fatalf("reclaimed = %q, want 1.234GB", reclaimed)
 	}
 
-	pruned, reclaimed = parsePruneOutput("Total reclaimed space: 0B")
-	if pruned != 0 || reclaimed != "0B" {
-		t.Fatalf("pruned = %d, reclaimed = %q, want 0 / 0B", pruned, reclaimed)
+	deleted, reclaimed = parsePruneOutput("Total reclaimed space: 0B")
+	if deleted != 0 || reclaimed != "0B" {
+		t.Fatalf("deleted = %d, reclaimed = %q, want 0 / 0B", deleted, reclaimed)
 	}
 }
 
@@ -65,8 +73,10 @@ func TestAutoPruneRunsDocker(t *testing.T) {
 	bin := t.TempDir()
 	script := `#!/bin/sh
 printf '%s\n' "$*" >> "$FAKE_ARGS_LOG"
-echo "Deleted: sha256:aaa"
-echo "Deleted: sha256:bbb"
+echo "Deleted Images:"
+echo "untagged: ghcr.io/you/web@sha256:aaa"
+echo "deleted: sha256:aaa"
+echo "deleted: sha256:bbb"
 echo "Total reclaimed space: 1.234GB"
 `
 	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0755); err != nil {
@@ -82,8 +92,8 @@ echo "Total reclaimed space: 1.234GB"
 	if res.Error != "" {
 		t.Fatalf("unexpected error: %s", res.Error)
 	}
-	if res.Pruned != 2 {
-		t.Fatalf("pruned = %d, want 2", res.Pruned)
+	if res.Deleted != 2 {
+		t.Fatalf("deleted = %d, want 2", res.Deleted)
 	}
 	if res.Reclaimed != "1.234GB" {
 		t.Fatalf("reclaimed = %q, want 1.234GB", res.Reclaimed)
@@ -153,9 +163,13 @@ func TestLoadConfigImagePrune(t *testing.T) {
 		}
 	}
 
-	t.Setenv("WEBHOOK_SECRET", "s3cret")
-	t.Setenv("IMAGE_PRUNE", "yesterday")
-	if _, err := loadConfig(); err == nil {
-		t.Fatal("expected error for invalid IMAGE_PRUNE")
+	// Invalid values (including non-positive durations, which would make the
+	// until filter silently behave like "all") fail at startup.
+	for _, bad := range []string{"yesterday", "0s", "-1h", "0"} {
+		t.Setenv("WEBHOOK_SECRET", "s3cret")
+		t.Setenv("IMAGE_PRUNE", bad)
+		if _, err := loadConfig(); err == nil {
+			t.Fatalf("expected error for invalid IMAGE_PRUNE=%s", bad)
+		}
 	}
 }

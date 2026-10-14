@@ -87,17 +87,20 @@ func loadConfig() (*Config, error) {
 	}
 	cfg.AllowedImagePrefixes = prefixes
 
-	// Normalize IMAGE_PRUNE: off/disabled => "", all/always => "all",
-	// anything else must parse as a Go duration (kept as written). Fail fast
-	// at startup so a typo doesn't silently disable or break cleanup.
+	// Normalize IMAGE_PRUNE: off/false/disabled/never => "", all/always =>
+	// "all", anything else must parse as a POSITIVE Go duration (kept as
+	// written). Fail fast at startup so a typo doesn't silently disable or
+	// break cleanup — and so 0/negatives can't make the until filter
+	// silently prune everything.
 	switch pr := strings.ToLower(strings.TrimSpace(cfg.ImagePrune)); pr {
-	case "", "off", "false", "0", "disabled", "never":
+	case "", "off", "false", "disabled", "never":
 		cfg.ImagePrune = ""
 	case "all", "always":
 		cfg.ImagePrune = "all"
 	default:
-		if _, err := time.ParseDuration(pr); err != nil {
-			return nil, fmt.Errorf("IMAGE_PRUNE: invalid value %q (want off, all, or a duration like 24h)", cfg.ImagePrune)
+		d, err := time.ParseDuration(pr)
+		if err != nil || d <= 0 {
+			return nil, fmt.Errorf("IMAGE_PRUNE: invalid value %q (want off, all, or a positive duration like 24h)", cfg.ImagePrune)
 		}
 		cfg.ImagePrune = pr
 	}

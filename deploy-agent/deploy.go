@@ -39,6 +39,13 @@ type deployer struct {
 	locksMu sync.Mutex
 	locks   map[string]*sync.Mutex
 
+	// dockerMu serializes daemon-wide docker state changes (pull, up, image
+	// prune) across ALL projects: the image store is shared, so a prune must
+	// never run inside another deploy's pull→up window, where a freshly
+	// pulled image is not yet referenced by a container and would look
+	// unused. The per-project locks below don't cover that.
+	dockerMu sync.Mutex
+
 	loginMu   sync.Mutex
 	loginDone bool
 	loginErr  error
@@ -187,37 +194,51 @@ func (d *deployer) doDeploy(req *DeployRequest) (DeployRecord, error) {
 		return fail(fmt.Errorf("ghcr login: %w", err))
 	}
 
-	pullOut, err := runCompose(d.cfg, dir, req.Project, "pull")
-	if err != nil {
+	// pull → up → prune run under the daemon-wide dockerMu: the image store
+	// is shared across projects, so a prune must never land inside another
+	// deploy's pull→up window, where a freshly pulled image is not yet
+	// referenced by a container and would look unused. The post-deploy hook
+	// runs after, outside the lock, so a slow health-check hook can't stall
+	// concurrent deploys.
+	d.dockerMu.Lock()
+	pullOut, pullErr := runCompose(d.cfg, dir, req.Project, "pull")
+	var upOut string
+	var upErr error
+	var prune *PruneResult
+	if pullErr == nil {
+		upOut, upErr = runCompose(d.cfg, dir, req.Project, "up", "-d", "--remove-orphans")
+	}
+	if pullErr == nil && upErr == nil {
+		prune = d.autoPrune(req.Project) // caller holds d.dockerMu
+	}
+	d.dockerMu.Unlock()
+
+	if pullErr != nil {
 		return fail(fmt.Errorf("compose pull failed: %s", pullOut))
 	}
-	upOut, err := runCompose(d.cfg, dir, req.Project, "up", "-d", "--remove-orphans")
-	if err != nil {
+	if upErr != nil {
 		return fail(fmt.Errorf("compose up failed: %s", upOut))
 	}
 	rec.Compose = &ComposeResult{PullOutputTail: pullOut, UpOutputTail: upOut}
 
-	var warning string
+	// Reclaimed disk + hook results surface as warnings; neither flips a
+	// successful deploy to failed.
+	var warnings []string
+	if prune != nil {
+		rec.Prune = prune
+		if prune.Error != "" {
+			warnings = append(warnings, "image prune failed: "+prune.Error)
+		}
+	}
 	if hookPath, ok := hookExists(dir, "post-deploy"); ok {
 		res := runHook(hookPath, dir, hookEnv(req, "success", "", time.Since(start).Milliseconds()), d.cfg.HookTimeout)
 		rec.PostHook = &HookResult{ExitCode: res.ExitCode, OutputTail: res.OutputTail, DurationMs: res.DurationMs}
 		if res.Err != nil {
-			warning = "post-deploy hook failed: " + res.Err.Error()
 			logEvent("hook.warning", map[string]any{"project": req.Project, "hook": "post-deploy", "error": res.Err.Error()})
+			warnings = append(warnings, "post-deploy hook failed: "+res.Err.Error())
 		}
 	}
-
-	// The deploy is live: reclaim disk by pruning images no container uses
-	// (previous SHA tags). Best-effort — a prune failure only adds a warning.
-	if prune := d.autoPrune(req.Project); prune != nil {
-		rec.Prune = prune
-		if prune.Error != "" {
-			if warning != "" {
-				warning += "; "
-			}
-			warning += "image prune failed: " + prune.Error
-		}
-	}
+	warning := strings.Join(warnings, "; ")
 
 	rec.DurationMs = time.Since(start).Milliseconds()
 	notify("deploy.succeeded", "success", warning)
@@ -293,7 +314,7 @@ func (d *deployer) handleGetDeployment(w http.ResponseWriter, r *http.Request) {
 // autoPrune removes old images no container uses after a successful deploy.
 // Disabled when cfg.ImagePrune is empty; best-effort — a prune failure is
 // logged and surfaced via the returned result, it never flips the deploy to
-// failed.
+// failed. The caller must hold d.dockerMu.
 func (d *deployer) autoPrune(project string) *PruneResult {
 	if d.cfg.ImagePrune == "" {
 		return nil
@@ -304,14 +325,14 @@ func (d *deployer) autoPrune(project string) *PruneResult {
 		OutputTail: tail(out, 4000),
 		DurationMs: time.Since(start).Milliseconds(),
 	}
-	res.Pruned, res.Reclaimed = parsePruneOutput(out)
+	res.Deleted, res.Reclaimed = parsePruneOutput(out)
 	if err != nil {
 		res.Error = fmt.Sprintf("%v: %s", err, tail(out, 500))
 		logEvent("prune.failed", map[string]any{"project": project, "error": res.Error})
 		return res
 	}
 	logEvent("prune.succeeded", map[string]any{
-		"project": project, "pruned": res.Pruned, "reclaimed": res.Reclaimed, "duration_ms": res.DurationMs,
+		"project": project, "deleted": res.Deleted, "reclaimed": res.Reclaimed, "duration_ms": res.DurationMs,
 	})
 	return res
 }

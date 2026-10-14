@@ -67,17 +67,22 @@ func (d *deployer) pruneImages() (string, error) {
 	return string(out), err
 }
 
+// The image-prune CLI prints a "Deleted Images:" header with lowercase
+// "untagged:" / "deleted:" lines, followed by "Total reclaimed space:".
 var (
-	pruneReclaimedRe = regexp.MustCompile(`Total reclaimed space: (.*)`)
-	pruneDeletedRe   = regexp.MustCompile(`(?m)^Deleted: `)
+	pruneReclaimedRe = regexp.MustCompile(`(?i)Total reclaimed space: (.*)`)
+	pruneDeletedRe   = regexp.MustCompile(`(?im)^deleted: `)
 )
 
-// parsePruneOutput extracts the number of deleted images and the total
-// reclaimed space from `docker image prune` output.
-func parsePruneOutput(out string) (pruned int, reclaimed string) {
+// parsePruneOutput extracts the reclaimed-space total and the number of
+// deletion entries from `docker image prune` output. Deletion is matched
+// case-insensitively across CLI versions; each `deleted:` line is one image
+// or shared parent layer, so the count is deletion entries, not distinct
+// images — reclaimed is the meaningful number.
+func parsePruneOutput(out string) (deleted int, reclaimed string) {
 	if m := pruneReclaimedRe.FindStringSubmatch(out); m != nil {
 		reclaimed = strings.TrimSpace(m[1])
 	}
-	pruned = len(pruneDeletedRe.FindAllString(out, -1))
-	return pruned, reclaimed
+	deleted = len(pruneDeletedRe.FindAllString(out, -1))
+	return deleted, reclaimed
 }

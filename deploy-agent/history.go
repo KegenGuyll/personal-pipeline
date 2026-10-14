@@ -17,9 +17,12 @@ type ComposeResult struct {
 }
 
 // PruneResult captures the outcome of the automatic image cleanup step that
-// runs after a successful deploy (see ImagePrune in config.go).
+// runs after a successful deploy (see ImagePrune in config.go). Deleted is
+// the number of deletion entries `docker image prune` reported — images plus
+// shared parent layers — not distinct images; Reclaimed is the meaningful
+// number.
 type PruneResult struct {
-	Pruned     int    `json:"pruned"`
+	Deleted    int    `json:"deleted"`
 	Reclaimed  string `json:"reclaimed,omitempty"`
 	OutputTail string `json:"output_tail,omitempty"`
 	DurationMs int64  `json:"duration_ms"`

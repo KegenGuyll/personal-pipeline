@@ -22,7 +22,7 @@ so it survives restarts). One record per deploy attempt:
  "tag":"sha-abc1234","sha":"…","repo":"you/my-service","status":"success",
  "duration_ms":8123,"pre_hook":{"exit_code":0,"output_tail":"…","duration_ms":12},
  "post_hook":{…},"compose":{"pull_output_tail":"…","up_output_tail":"…"},
- "prune":{"pruned":3,"reclaimed":"1.234GB","output_tail":"…","duration_ms":450},
+ "prune":{"deleted":11,"reclaimed":"1.234GB","output_tail":"…","duration_ms":450},
  "notifications":["https://…:ok"],"error":""}
 ```
 
@@ -30,10 +30,11 @@ so it survives restarts). One record per deploy attempt:
 written — secrets stay out of history.
 
 On successful deploys the record may also include `prune`: the automatic image
-cleanup (`IMAGE_PRUNE`) that runs after the compose up and reports how many
-unused images were removed (`pruned`) and how much space that reclaimed
-(`reclaimed`). A prune failure never flips the deploy to failed — it only adds
-a warning to the notification.
+cleanup (`IMAGE_PRUNE`) that runs after the compose up and reports how much
+space it reclaimed (`reclaimed`) and how many deletion entries docker printed
+(`deleted` — images plus shared parent layers, so it exceeds the number of
+distinct images). A prune failure never flips the deploy to failed — it only
+adds a warning to the notification.
 
 ## 3. Read API
 
