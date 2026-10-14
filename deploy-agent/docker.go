@@ -94,11 +94,18 @@ func imagePruneArgs(setting string) []string {
 // an image a hook just pulled. First one in wins: prune skips when hooks are
 // active (pruning is best-effort and catches up on the next successful
 // deploy), and hooks wait while a prune runs (bounded by pruneTimeout, so
-// the wait cannot hang). It coordinates only this agent's operations —
-// external docker clients (e.g. host-side compose runs during a stack
-// rollout) can't acquire a process-local lock; the daemon itself protects
-// images referenced by containers, and a pruned-then-repulled image
-// self-heals on the next command.
+// the wait cannot hang).
+//
+// Accepted residuals, deliberately not closed: (1) a hook that exits
+// successfully after backgrounding docker work (output redirected, so it
+// holds no pipes) survives the group kill — the gate releases while that
+// work runs; (2) external docker clients (host-side compose during a stack
+// rollout) can't acquire a process-local lock at all. Both are self-healing
+// in every case: the daemon protects images referenced by containers, and
+// any consumer of a pruned image (docker run, compose up, docker pull)
+// re-fetches it automatically. Closing them fully would mean supervising
+// arbitrary descendant processes — machinery a setsid'ed child escapes
+// anyway — disproportionate for this agent.
 type dockerGate struct {
 	mu      sync.Mutex
 	hooks   int
