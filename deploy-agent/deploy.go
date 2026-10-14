@@ -221,10 +221,10 @@ func (d *deployer) doDeploy(req *DeployRequest) (DeployRecord, error) {
 	d.dockerMu.Unlock()
 
 	if pullErr != nil {
-		return fail(fmt.Errorf("compose pull failed: %s", pullOut))
+		return fail(fmt.Errorf("compose pull failed: %v: %s", pullErr, pullOut))
 	}
 	if upErr != nil {
-		return fail(fmt.Errorf("compose up failed: %s", upOut))
+		return fail(fmt.Errorf("compose up failed: %v: %s", upErr, upOut))
 	}
 	rec.Compose = &ComposeResult{PullOutputTail: pullOut, UpOutputTail: upOut}
 

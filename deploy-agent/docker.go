@@ -20,12 +20,50 @@ func dockerEnv(cfg *Config) []string {
 	return append(os.Environ(), "DOCKER_CONFIG="+filepath.Join(cfg.DataDir, ".docker"))
 }
 
+// composeTimeout bounds each compose invocation (pull can legitimately take
+// minutes on large images; 10m is generous). Compose commands run under
+// dockerMu, so without a cap a hung one blocks every deploy, the dashboard
+// start action, and the webhook HTTP response. var so tests can shorten it.
+var composeTimeout = 10 * time.Minute
+
 func runCompose(cfg *Config, dir, project string, args ...string) (string, error) {
 	base := []string{"compose", "-p", project, "--project-directory", dir, "-f", filepath.Join(dir, "docker-compose.yml")}
-	cmd := exec.Command("docker", append(base, args...)...)
+	out, err := runDocker(cfg, composeTimeout, append(base, args...)...)
+	return tail(out, 4000), err
+}
+
+// runDocker runs one docker command with a hard cap: the command (and any
+// children it spawns) runs in its own process group and the whole group is
+// SIGKILLed at the deadline, so a hung command can't hold dockerMu — and the
+// webhook HTTP response — forever. cmd.Cancel is invoked by os/exec only
+// while the command may still be alive (never after a successful Wait), so
+// the group kill can't land on a reused pid's group.
+func runDocker(cfg *Config, timeout time.Duration, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Env = dockerEnv(cfg)
-	out, err := cmd.CombinedOutput()
-	return tail(string(out), 4000), err
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return os.ErrProcessDone
+		}
+		// Reject the already-completed case so the group kill can't land on
+		// a reused pid (Process.Signal(0) fails once the process is gone).
+		if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+			return os.ErrProcessDone
+		}
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	err := cmd.Run()
+	out := buf.String()
+	if ctx.Err() == context.DeadlineExceeded {
+		return out, fmt.Errorf("timed out after %s", timeout)
+	}
+	return out, err
 }
 
 func (d *deployer) ensureLogin() error {
@@ -126,38 +164,7 @@ var pruneTimeout = 5 * time.Minute
 // pruneImages removes images no container is using (old SHA tags left behind
 // by previous deploys), returning the full command output.
 func (d *deployer) pruneImages() (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), pruneTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "docker", imagePruneArgs(d.cfg.ImagePrune)...)
-	cmd.Env = dockerEnv(d.cfg)
-	// Own process group, and kill the whole group on timeout: CommandContext
-	// signals only the direct child, while the wait blocks until the output
-	// pipes close — orphaned children spawned by the killed command (a CLI
-	// credential helper or plugin) would otherwise outlive the kill and hang
-	// the prune. cmd.Cancel runs only while the command may still be alive
-	// (never after a successful Wait), so the group kill can't land on a
-	// reused pid's group.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return os.ErrProcessDone
-		}
-		// Reject the already-completed case so the group kill can't land on
-		// a reused pid (Process.Signal(0) fails once the process is gone).
-		if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
-			return os.ErrProcessDone
-		}
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	}
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-	err := cmd.Run()
-	out := buf.String()
-	if ctx.Err() == context.DeadlineExceeded {
-		return out, fmt.Errorf("prune timed out after %s", pruneTimeout)
-	}
-	return out, err
+	return runDocker(d.cfg, pruneTimeout, imagePruneArgs(d.cfg.ImagePrune)...)
 }
 
 // The image-prune CLI prints a "Deleted Images:" header with lowercase

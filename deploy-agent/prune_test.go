@@ -275,6 +275,21 @@ func TestRunHookTrackedWaitsForPrune(t *testing.T) {
 	}
 }
 
+// TestRunComposeTimesOut: compose runs under dockerMu, so a hung invocation
+// must be killed at the cap instead of blocking every deploy forever.
+func TestRunComposeTimesOut(t *testing.T) {
+	fakeDockerPath(t, "sleep 30\n")
+
+	old := composeTimeout
+	composeTimeout = 50 * time.Millisecond
+	defer func() { composeTimeout = old }()
+
+	_, err := runCompose(&Config{DataDir: t.TempDir()}, t.TempDir(), "web", "pull")
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("expected timeout error, got %v", err)
+	}
+}
+
 func TestLoadConfigImagePrune(t *testing.T) {
 	// Unset falls back to the default (skip if the sandbox has it set).
 	if os.Getenv("IMAGE_PRUNE") == "" {
