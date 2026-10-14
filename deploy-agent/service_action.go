@@ -49,6 +49,15 @@ func (d *deployer) handleServiceAction(action string) http.HandlerFunc {
 			return
 		}
 
+		// "start" runs `compose up -d`, which pulls a missing image — the
+		// same image-store mutation a deploy performs, so it shares the
+		// daemon-wide dockerMu (a concurrent prune must not delete the image
+		// it just pulled). stop/restart don't touch the image store.
+		if action == "start" {
+			d.dockerMu.Lock()
+			defer d.dockerMu.Unlock()
+		}
+
 		out, err := runCompose(d.cfg, dir, name, compArgs...)
 		if err != nil {
 			logEvent("service.action_failed", map[string]any{

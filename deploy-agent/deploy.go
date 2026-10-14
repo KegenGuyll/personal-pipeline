@@ -39,6 +39,20 @@ type deployer struct {
 	locksMu sync.Mutex
 	locks   map[string]*sync.Mutex
 
+	// dockerMu serializes daemon-wide docker state changes (pull, up, image
+	// prune) across ALL projects: the image store is shared, so a prune must
+	// never run inside another deploy's pull→up window, where a freshly
+	// pulled image is not yet referenced by a container and would look
+	// unused. The per-project locks below don't cover that.
+	dockerMu sync.Mutex
+
+	// gate makes deploy hooks and image pruning mutually exclusive regardless
+	// of which starts first — see dockerGate in docker.go. Hooks must not
+	// serialize INTO dockerMu: a hook that calls back into this agent's
+	// docker-touching endpoints (e.g. POST /services/{name}/start) would hold
+	// the lock while waiting on a handler that needs it.
+	gate dockerGate
+
 	loginMu   sync.Mutex
 	loginDone bool
 	loginErr  error
@@ -172,7 +186,7 @@ func (d *deployer) doDeploy(req *DeployRequest) (DeployRecord, error) {
 	notify("deploy.started", "started", "")
 
 	if hookPath, ok := hookExists(dir, "pre-deploy"); ok {
-		res := runHook(hookPath, dir, hookEnv(req, "started", "", 0), d.cfg.HookTimeout)
+		res := d.runHookTracked(hookPath, dir, hookEnv(req, "started", "", 0))
 		rec.PreHook = &HookResult{ExitCode: res.ExitCode, OutputTail: res.OutputTail, DurationMs: res.DurationMs}
 		if res.Err != nil {
 			return fail(fmt.Errorf("pre-deploy hook failed: %w", res.Err))
@@ -187,25 +201,51 @@ func (d *deployer) doDeploy(req *DeployRequest) (DeployRecord, error) {
 		return fail(fmt.Errorf("ghcr login: %w", err))
 	}
 
-	pullOut, err := runCompose(d.cfg, dir, req.Project, "pull")
-	if err != nil {
-		return fail(fmt.Errorf("compose pull failed: %s", pullOut))
+	// pull → up → prune run under the daemon-wide dockerMu: the image store
+	// is shared across projects, so a prune must never land inside another
+	// deploy's pull→up window, where a freshly pulled image is not yet
+	// referenced by a container and would look unused. The post-deploy hook
+	// runs after, outside the lock, so a slow health-check hook can't stall
+	// concurrent deploys.
+	d.dockerMu.Lock()
+	pullOut, pullErr := runCompose(d.cfg, dir, req.Project, "pull")
+	var upOut string
+	var upErr error
+	var prune *PruneResult
+	if pullErr == nil {
+		upOut, upErr = runCompose(d.cfg, dir, req.Project, "up", "-d", "--remove-orphans")
 	}
-	upOut, err := runCompose(d.cfg, dir, req.Project, "up", "-d", "--remove-orphans")
-	if err != nil {
-		return fail(fmt.Errorf("compose up failed: %s", upOut))
+	if pullErr == nil && upErr == nil {
+		prune = d.autoPrune(req.Project) // caller holds d.dockerMu
+	}
+	d.dockerMu.Unlock()
+
+	if pullErr != nil {
+		return fail(fmt.Errorf("compose pull failed: %v: %s", pullErr, pullOut))
+	}
+	if upErr != nil {
+		return fail(fmt.Errorf("compose up failed: %v: %s", upErr, upOut))
 	}
 	rec.Compose = &ComposeResult{PullOutputTail: pullOut, UpOutputTail: upOut}
 
-	var warning string
-	if hookPath, ok := hookExists(dir, "post-deploy"); ok {
-		res := runHook(hookPath, dir, hookEnv(req, "success", "", time.Since(start).Milliseconds()), d.cfg.HookTimeout)
-		rec.PostHook = &HookResult{ExitCode: res.ExitCode, OutputTail: res.OutputTail, DurationMs: res.DurationMs}
-		if res.Err != nil {
-			warning = "post-deploy hook failed: " + res.Err.Error()
-			logEvent("hook.warning", map[string]any{"project": req.Project, "hook": "post-deploy", "error": res.Err.Error()})
+	// Reclaimed disk + hook results surface as warnings; neither flips a
+	// successful deploy to failed.
+	var warnings []string
+	if prune != nil {
+		rec.Prune = prune
+		if prune.Error != "" {
+			warnings = append(warnings, "image prune failed: "+prune.Error)
 		}
 	}
+	if hookPath, ok := hookExists(dir, "post-deploy"); ok {
+		res := d.runHookTracked(hookPath, dir, hookEnv(req, "success", "", time.Since(start).Milliseconds()))
+		rec.PostHook = &HookResult{ExitCode: res.ExitCode, OutputTail: res.OutputTail, DurationMs: res.DurationMs}
+		if res.Err != nil {
+			logEvent("hook.warning", map[string]any{"project": req.Project, "hook": "post-deploy", "error": res.Err.Error()})
+			warnings = append(warnings, "post-deploy hook failed: "+res.Err.Error())
+		}
+	}
+	warning := strings.Join(warnings, "; ")
 
 	rec.DurationMs = time.Since(start).Milliseconds()
 	notify("deploy.succeeded", "success", warning)
@@ -277,6 +317,48 @@ func (d *deployer) handleGetDeployment(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---- helpers ----
+
+// runHookTracked runs a deploy hook through the docker gate, so a running
+// prune waits it out (bounded by pruneTimeout) instead of racing the images
+// the hook may pull.
+func (d *deployer) runHookTracked(script, dir string, env map[string]string) HookResult {
+	d.gate.hookBegin()
+	defer d.gate.hookEnd()
+	return runHook(script, dir, env, d.cfg.HookTimeout)
+}
+
+// autoPrune removes old images no container uses after a successful deploy.
+// Disabled when cfg.ImagePrune is empty; best-effort — a prune failure is
+// logged and surfaced via the returned result, it never flips the deploy to
+// failed. Skips when deploy hooks are active (the gate rejects admission;
+// the next successful deploy prunes instead). The caller must hold
+// d.dockerMu.
+func (d *deployer) autoPrune(project string) *PruneResult {
+	if d.cfg.ImagePrune == "" {
+		return nil
+	}
+	if !d.gate.pruneBegin() {
+		logEvent("prune.skipped", map[string]any{"project": project, "reason": "hooks_active"})
+		return nil
+	}
+	defer d.gate.pruneEnd()
+	start := time.Now()
+	out, err := d.pruneImages()
+	res := &PruneResult{
+		OutputTail: tail(out, 4000),
+		DurationMs: time.Since(start).Milliseconds(),
+	}
+	res.Deleted, res.Reclaimed = parsePruneOutput(out)
+	if err != nil {
+		res.Error = fmt.Sprintf("%v: %s", err, tail(out, 500))
+		logEvent("prune.failed", map[string]any{"project": project, "error": res.Error})
+		return res
+	}
+	logEvent("prune.succeeded", map[string]any{
+		"project": project, "deleted": res.Deleted, "reclaimed": res.Reclaimed, "duration_ms": res.DurationMs,
+	})
+	return res
+}
 
 func verifySignature(secret string, body []byte, header string) bool {
 	const prefix = "sha256="

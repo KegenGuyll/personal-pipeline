@@ -24,6 +24,7 @@ services:
       PORT: "8080"
       DATA_DIR: /data
       LOG_RETENTION: ${LOG_RETENTION:-100}
+      IMAGE_PRUNE: ${IMAGE_PRUNE:-24h}
       READ_TOKEN: ${READ_TOKEN:-}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}

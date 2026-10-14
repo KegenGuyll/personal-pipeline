@@ -5,9 +5,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"os"
+	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 )
 
 var envKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -43,6 +46,27 @@ func mapToEnv(m map[string]string) []string {
 		out = append(out, k+"="+m[k])
 	}
 	return out
+}
+
+// groupKillCmd puts cmd in its own process group and registers a cmd.Cancel
+// that SIGKILLs the whole group. With the default CommandContext cancellation
+// only the direct child dies — a backgrounded or output-redirected grandchild
+// (a docker pull a hook script spawned, say) survives the timeout while still
+// holding resources. cmd.Cancel is invoked by os/exec only while the command
+// may still be alive (never after a successful Wait), and the
+// Process.Signal(0) check guards the already-completed case so the kill can't
+// land on a reused pid's group.
+func groupKillCmd(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return os.ErrProcessDone
+		}
+		if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+			return os.ErrProcessDone
+		}
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
 }
 
 func quoteDotenvValue(v string) string {
