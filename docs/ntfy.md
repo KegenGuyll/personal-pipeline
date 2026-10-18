@@ -70,6 +70,13 @@ and proxies `/` to `http://ntfy-app:80`. No host port, no public route.
 
    From a tailnet device, `tailscale status` should show a new `ntfy` node.
 
+> **iOS push requires `NTFY_UPSTREAM_BASE_URL=https://ntfy.sh`.** A self-hosted
+> ntfy relays notifications to the phone through an upstream ntfy
+> infrastructure. If it's unset, the iOS app stays subscribed but never receives
+> an actual push (the topic shows the message in the app's list only when it's
+> open). Set this in `services/ntfy/.env` and `up`/restart the ntfy container —
+> it needs outbound internet to `ntfy.sh`.
+
 ## Using it from DSH
 
 In the DSH web UI → **Settings → Plugins → Notify**:
