@@ -31,8 +31,16 @@ type ServiceSpec struct {
 // operator-supplied name/image/port/hostname are interpolated; everything else
 // is fixed, including `${TS_CERT_DOMAIN}` (rendered as `$${...}` so compose
 // passes it through to the tailscale container).
+//
+// The app service is named "<name>-app" (NOT "<name>") deliberately. The
+// sidecar below sets `hostname:`, and Docker's embedded DNS registers that
+// hostname on the `proxy` network. If the app service used the same name, the
+// hostname would shadow it: `http://<name>:<port>` could resolve to the SIDECAR
+// itself, where the app port isn't listening, and the serve proxy would return
+// 502. Keeping the app name distinct avoids the collision (same fix as
+// services/ntfy/docker-compose.yml); the proxy target below uses <name>-app.
 const serviceComposeTemplate = `services:
-  {{.Name}}:
+  {{.Name}}-app:
     image: {{.Image}}:${TAG}
     restart: unless-stopped
     env_file: .env
@@ -65,7 +73,7 @@ const serviceComposeTemplate = `services:
     networks:
       - proxy
     depends_on:
-      - {{.Name}}
+      - {{.Name}}-app
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:41234/healthz"]
       interval: 1m
@@ -77,7 +85,7 @@ configs:
   ts-serve:
     content: |
       {"TCP":{"443":{"HTTPS":true}},
-       "Web":{"$${TS_CERT_DOMAIN}:443":{"Handlers":{"/":{"Proxy":"http://{{.Name}}:{{.Port}}"}}}},
+       "Web":{"$${TS_CERT_DOMAIN}:443":{"Handlers":{"/":{"Proxy":"http://{{.Name}}-app:{{.Port}}"}}}},
        "AllowFunnel":{"$${TS_CERT_DOMAIN}:443":false}}
 
 networks:

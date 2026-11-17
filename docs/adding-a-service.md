@@ -22,12 +22,18 @@ cp -R services/_template services/my-service
 
 Edit `services/my-service/docker-compose.yml`:
 
-1. Rename the `app` service key to `my-service`, and update the `Proxy` URL in
-   the `ts-serve` config at the bottom to `http://my-service:<port>`.
+1. Rename the `app` service key to `my-service-app`, and update `depends_on`
+   plus the `Proxy` URL in the `ts-serve` config at the bottom to
+   `http://my-service-app:<port>`.
+   > Keep the app service key **different** from the Tailscale `hostname`. The
+   > sidecar's `hostname` is registered in Docker's embedded DNS on the `proxy`
+   > network; if the app service used the same name, that hostname would shadow
+   > it and the sidecar could proxy to itself instead of the app, returning
+   > `502` (see [ntfy.md](ntfy.md) for the same fix).
 2. Set `image: ghcr.io/YOUR_OWNER/my-service:${TAG}` (owner lowercase).
 3. Set the container port in `expose` (default `3000`).
 4. Set the Tailscale `hostname` — this is the MagicDNS name
-   `https://<hostname>.<tailnet>.ts.net`.
+   `https://<hostname>.<tailnet>.ts.net` (usually just `my-service`).
 
 The template already includes a per-app **Tailscale sidecar**, so the service is
 private by default (no public route). See [tailscale.md](tailscale.md). To make

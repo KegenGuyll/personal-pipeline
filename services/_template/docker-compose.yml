@@ -1,9 +1,14 @@
 # Copy this directory to services/<name>/ and adjust:
-#   1. service key `app` -> your service name (unique on the `proxy` network);
-#      update BOTH the service key and the `Proxy` target in `ts-serve` below.
+#   1. service key `app` -> `<name>-app` (unique on the `proxy` network); update
+#      the service key, the `depends_on` below, and the `Proxy` target in
+#      `ts-serve`. Do NOT name the app service `<name>`: the sidecar's
+#      `hostname` is registered in Docker's embedded DNS on the `proxy` network,
+#      so `<name>` would resolve to the sidecar too and the proxy could return
+#      502 (see services/ntfy/docker-compose.yml for the same fix).
 #   2. image             -> ghcr.io/<owner>/<service>:${TAG}  (owner LOWERCASE)
 #   3. port              -> the app's container port (default 3000)
 #   4. hostname          -> the MagicDNS name: https://<hostname>.<tailnet>.ts.net
+#      (keep it distinct from the app service key; usually just `<name>`)
 # `${TAG}` is written by the deploy agent into this directory's `.env`.
 #
 # Access: per-app Tailscale sidecar (private). No host port, no public exposure.
@@ -11,7 +16,7 @@
 # GitHub secret. See docs/tailscale.md.
 
 services:
-  app: # RENAME to your service name (also update the Proxy URL in `ts-serve`)
+  app: # RENAME to <name>-app (also update depends_on + the Proxy URL in `ts-serve`)
     image: ghcr.io/YOUR_OWNER/YOUR_SERVICE:${TAG}
     restart: unless-stopped
     env_file: .env
