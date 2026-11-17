@@ -106,6 +106,18 @@ tailscale status          # from a device: see the new <hostname> node
 - `402`/no HTTPS: confirm **HTTPS Certificates** is enabled in the tailnet.
 - App not resolving: confirm the sidecar and app are on the same `proxy` network
   and the `Proxy` URL uses the right service name + port.
+- **`502` from `https://<hostname>.<tailnet>.ts.net/`:** the sidecar is up but
+  cannot reach the app. First check the app container is running and listening
+  on the `expose` port. Also make sure the app service is **not named the same
+  as the sidecar `hostname`**: Docker's embedded DNS registers that hostname on
+  `proxy`, so `http://<name>:<port>` can resolve to the sidecar itself (where
+  nothing listens) and the proxy returns 502. Name the app service
+  `<name>-app` and point `Proxy` at it, as in `services/ntfy/docker-compose.yml`.
+- **`403 Blocked request ... is not allowed`:** Tailscale serve forwards the
+  browser's `Host` header unchanged, so the app's own host allowlist must
+  include the MagicDNS FQDN. For Vite/`vite preview`, add the hostname to
+  `server.allowedHosts` (dev) and `preview.allowedHosts` (the Docker image);
+  other frameworks need the equivalent (`ALLOWED_HOSTS`, `allowedHosts`, ...).
 
 ## Single-node alternative (not recommended for multiple root-path apps)
 

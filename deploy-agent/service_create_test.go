@@ -63,18 +63,25 @@ func TestRenderServiceCompose(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"web:",
+		"web-app:",
 		"image: ghcr.io/o/web:${TAG}",
 		`- "4242"`,
 		"hostname: ${TS_HOSTNAME:-webtail}",
 		"tailscale/tailscale:",
 		"$${TS_CERT_DOMAIN}",
-		`"Proxy":"http://web:4242"`,
-		"depends_on:\n      - web",
+		`"Proxy":"http://web-app:4242"`,
+		"depends_on:\n      - web-app",
 	} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("missing %q in:\n%s", want, s)
 		}
+	}
+
+	// The app service must not share the sidecar's hostname: that hostname is
+	// registered in Docker DNS and would shadow the app, making the proxy
+	// return 502.
+	if strings.Contains(s, "\n  web:\n") {
+		t.Fatalf("app service must not be named the same as the hostname:\n%s", s)
 	}
 }
 
